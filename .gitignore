@@ -1,0 +1,17 @@
+.DS_Store
+/.idea/
+commands.txt
+/.settings/
+.project
+.classpath
+/target/
+/results/
+/repos/
+/output/*
+/repos-full-test/*
+/out-full-test/*
+/test-repos/
+/clone/
+/.vscode
+/logs
+/node_modules/
