@@ -1,0 +1,55 @@
+name: Run metric extraction (CIMET's ISAR metrics module)
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: 'Git ref (branch or tag) of spinnaker/spinnaker to analyze'
+        required: false
+        default: 'main'
+
+jobs:
+  metrics:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Cimet
+        uses: actions/checkout@v4
+
+      - name: Set up Temurin JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: maven
+
+      - name: Build Cimet
+        run: mvn -B -ntp clean install -DskipTests
+
+      - name: Prepare Spinnaker configuration
+        env:
+          TARGET_REF: ${{ inputs.ref || 'main' }}
+        run: |
+          cat <<JSON > config.json
+          {
+            "systemName": "Spinnaker",
+            "repositoryURL": "https://github.com/spinnaker/spinnaker.git",
+            "branch": "${TARGET_REF}",
+            "baseBranch": "${TARGET_REF}"
+          }
+          JSON
+
+      - name: Run CIMET ISAR metrics extraction
+        run: mvn exec:java -Dexec.mainClass=edu.university.ecs.lab.detection.metrics.MetricCalculation -Dexec.args="./config.json" -DskipTests
+
+      - name: List generated artifacts
+        run: |
+          echo "Workspace contents:"
+          ls -R output || true
+
+      - name: Upload metrics artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: spinnaker-metrics-${{ github.run_id }}
+          path: |
+            output/metrics-summary.txt
+          if-no-files-found: error
