@@ -123,6 +123,16 @@ Sample output produced:
 - Run or compile the main method of ``IRMergeRunner.java`` in the IDE of your choice or via the command line.
 - Provide command line args containing ``path/to/IR/<IR-File>.json  path/to/Delta/<IR-File>.json  /path/to/config/<Config-File>.json``
 
+## Running ISAR metrics
+- Execute the ISAR metrics runner with Maven using the dedicated profile:
+  ``mvn -P run-metrics exec:java -Dexec.args="/path/to/config/<Config-File>.json  <oldCommit>  <newCommit>" -DskipTests``
+
+  * Provide one or more commit SHAs after the config path to calculate metrics for specific revisions.
+  * If two commits are supplied, the tool generates a metrics report for each commit in order (for example, two commits representing a two-month window).
+  * Omitting commit IDs defaults to analyzing the repository head.
+
+  The generated report is written to ``output/metrics-summary.txt`` and streamed to the console.
+
 ## GitHub Actions support
 
 ### Spinnaker analysis workflow
@@ -150,3 +160,15 @@ During execution the workflow:
 4. Uploads the generated `output/Delta.json` artifact so you can inspect the detected changes.
 
 Supplying a different branch or tag in the workflow dispatch form adjusts both commits before running the delta extraction.
+
+### Spinnaker ISAR metrics workflow
+
+Use the `.github/workflows/spinnaker-metric-extraction.yml` workflow to run CIMET's ISAR metrics module against [spinnaker/spinnaker](https://github.com/spinnaker/spinnaker). Launch **Run metric extraction (CIMET's ISAR metrics module)** from the **Actions** tab and provide an optional branch or tag (default `main`).
+
+The workflow performs the following steps:
+
+1. Builds the CIMET project with Maven.
+2. Clones the selected branch of Spinnaker and identifies the most recent commit together with the latest commit at or before the two-month cut-off.
+3. Generates a temporary `config.json` targeting the desired branch of Spinnaker.
+4. Executes the ISAR metrics runner (`mvn -P run-metrics exec:java`) providing both commits so the report contains metrics snapshots for the entire two-month window.
+5. Uploads the generated `output/metrics-summary.txt` artifact so you can review the reported cohesion and coupling metrics for each commit.

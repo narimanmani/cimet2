@@ -212,6 +212,16 @@
             </build>
         </profile>
 
+        <profile>
+            <id>run-metrics</id>
+            <properties>
+                <mainClass>edu.university.ecs.lab.detection.metrics.MetricCalculation</mainClass>
+            </properties>
+            <build>
+                <defaultGoal>exec:java</defaultGoal>
+            </build>
+        </profile>
+
         <!-- Profile for Main Class 3 -->
         <profile>
             <id>run-merge</id>
