@@ -137,3 +137,16 @@ The workflow performs the following steps:
 4. Uploads the generated `output/IR.json` as an artifact for download and further analysis.
 
 If you need to analyze a different branch or tag of Spinnaker, provide the desired ref in the workflow dispatch form before starting the run.
+
+### Spinnaker delta analysis workflow
+
+The `.github/workflows/spinnaker-delta-analysis.yml` workflow builds on top of the IR extraction workflow and focuses on generating an IR delta for changes committed to [spinnaker/spinnaker](https://github.com/spinnaker/spinnaker) within the last two months. Trigger **Spinnaker Cimet Delta Analysis** from the **Actions** tab to run it.
+
+During execution the workflow:
+
+1. Builds the Cimet project and prepares a `config.json` targeting Spinnaker.
+2. Clones the requested branch (default `main`) of Spinnaker and determines the most recent commit and the latest commit at or before the two-month cut-off.
+3. Runs the delta extraction runner (`mvn -P run-delta exec:java`) between the two commits.
+4. Uploads the generated `output/Delta.json` artifact so you can inspect the detected changes.
+
+Supplying a different branch or tag in the workflow dispatch form adjusts both commits before running the delta extraction.
