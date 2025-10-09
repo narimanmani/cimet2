@@ -11,6 +11,8 @@
         <maven.compiler.source>16</maven.compiler.source>
         <maven.compiler.parameters>true</maven.compiler.parameters>
         <compiler-plugin.version>3.8.1</compiler-plugin.version>
+        <!-- Provide a sensible default so plugins that rely on ${mainClass} do not fail -->
+        <mainClass>edu.university.ecs.lab.detection.ExcelOutputRunner</mainClass>
     </properties>
     <packaging>jar</packaging>
 
