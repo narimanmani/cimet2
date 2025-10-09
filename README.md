@@ -11,6 +11,24 @@ This project tracks microservice system evolution changes across repositories.
 ## To Compile:
     ``mvn clean install -DskipTests``
 
+## Running via Maven profiles
+
+The `exec-maven-plugin` and packaging plugins expect the `mainClass` property to be set. A sensible default of
+`edu.university.ecs.lab.detection.ExcelOutputRunner` is defined in the `pom.xml`, and you can switch to another entry point by
+activating one of the provided Maven profiles (each overrides the `mainClass` property) or by passing `-DmainClass=...` on the
+command line. For example, to run the Excel output runner via Maven use:
+
+```bash
+mvn clean install -DskipTests
+mvn -P run-history exec:java
+```
+
+Alternatively, call the plugin directly with an explicit main class:
+
+```bash
+mvn exec:java -Dexec.mainClass=edu.university.ecs.lab.detection.ExcelOutputRunner
+```
+
 ## Extracting an Intermediate Representation:
 - Run or compile the main method of ``IRExtractionRunner.java`` in the IDE of your choice or via the command line.
 - Command line args list containing ``/path/to/config/<Config-File>.json``
