@@ -37,7 +37,10 @@ public class JsonReadWriteUtils {
         Gson gson = new GsonBuilder().setPrettyPrinting().disableHtmlEscaping().create();
         try {
             Path path = Paths.get(filePath);
-            Files.createDirectories(path.getParent());
+            Path parent = path.getParent();
+            if (parent != null) {
+                Files.createDirectories(parent);
+            }
             try (Writer writer = Files.newBufferedWriter(path)) {
                 gson.toJson(object, writer);
             }

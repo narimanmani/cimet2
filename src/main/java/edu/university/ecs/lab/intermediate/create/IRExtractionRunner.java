@@ -5,6 +5,8 @@ import edu.university.ecs.lab.common.services.LoggerManager;
 import edu.university.ecs.lab.common.utils.FileUtils;
 import edu.university.ecs.lab.intermediate.create.services.IRExtractionService;
 
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.util.Arrays;
 import java.util.Optional;
 
@@ -34,7 +36,8 @@ public class IRExtractionRunner {
         IRExtractionService irExtractionService = new IRExtractionService(args[0], Optional.empty());
 
         // Generate the Intermediate Representation
-        irExtractionService.generateIR("IR.json");
+        Path outputFile = Paths.get(FileUtils.getOutputPath(), "IR.json");
+        irExtractionService.generateIR(outputFile.toString());
 
     }
 }

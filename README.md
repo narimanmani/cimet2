@@ -22,6 +22,7 @@ Sample input config file:
   "systemName": "Train-ticket",
   "repositoryURL": "https://github.com/g-goulis/train-ticket-microservices-test.git",
   "endCommit": "06f3e1efe2e2539d05d91b0699cc8d9fe7be29d7",
+  "branch": "main",
   "baseBranch": "main"
 }
 ```
@@ -121,3 +122,18 @@ Sample output produced:
 ## Merging an IR & System Change:
 - Run or compile the main method of ``IRMergeRunner.java`` in the IDE of your choice or via the command line.
 - Provide command line args containing ``path/to/IR/<IR-File>.json  path/to/Delta/<IR-File>.json  /path/to/config/<Config-File>.json``
+
+## GitHub Actions support
+
+### Spinnaker analysis workflow
+
+This repository now provides a reusable GitHub Actions workflow for running the IR extraction against the [spinnaker/spinnaker](https://github.com/spinnaker/spinnaker) project. The workflow lives at `.github/workflows/spinnaker-analysis.yml` and can be triggered manually from the **Actions** tab by selecting **Spinnaker Cimet Analysis** and clicking **Run workflow**.
+
+The workflow performs the following steps:
+
+1. Builds the Cimet project with Maven.
+2. Generates a temporary `config.json` targeting the Spinnaker repository (default branch `main`, configurable via workflow dispatch input).
+3. Executes the IR extraction runner (`mvn -P run-ir exec:java`).
+4. Uploads the generated `output/IR.json` as an artifact for download and further analysis.
+
+If you need to analyze a different branch or tag of Spinnaker, provide the desired ref in the workflow dispatch form before starting the run.
