@@ -1,0 +1,55 @@
+name: Spinnaker Cimet Analysis
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: 'Git ref (branch or tag) of spinnaker/spinnaker to analyze'
+        required: false
+        default: 'main'
+
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Cimet
+        uses: actions/checkout@v4
+
+      - name: Set up Temurin JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: maven
+
+      - name: Build Cimet
+        run: mvn -B -ntp clean install -DskipTests
+
+      - name: Prepare Spinnaker configuration
+        env:
+          TARGET_REF: ${{ inputs.ref || 'main' }}
+        run: |
+          cat <<JSON > config.json
+          {
+            "systemName": "Spinnaker",
+            "repositoryURL": "https://github.com/spinnaker/spinnaker.git",
+            "branch": "${TARGET_REF}",
+            "baseBranch": "${TARGET_REF}"
+          }
+          JSON
+
+      - name: Run Cimet IR extraction
+        run: mvn -P run-ir exec:java -DskipTests
+
+      - name: List generated artifacts
+        run: |
+          echo "Workspace contents:"
+          ls -R output || true
+
+      - name: Upload IR artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: spinnaker-ir-${{ github.run_id }}
+          path: |
+            output/IR.json
+          if-no-files-found: error
