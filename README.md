@@ -161,3 +161,28 @@ The workflow performs the following steps:
 2. Generates a temporary `config.json` targeting the desired branch of Spinnaker.
 3. Executes the ISAR metrics runner (`mvn exec:java -Dexec.mainClass=edu.university.ecs.lab.detection.metrics.MetricCalculation`).
 4. Uploads the generated `output/metrics-summary.txt` artifact so you can review the reported cohesion and coupling metrics.
+
+### Spinnaker Excel detection workflow
+
+The `.github/workflows/spinnaker-excel-output.yml` workflow runs the detection module that produces Excel summaries for [spinnaker/spinnaker](https://github.com/spinnaker/spinnaker). Trigger **Run Excel output (CIMET detection module) for Spinnaker** from the **Actions** tab and optionally supply a branch or tag (default `main`).
+
+This workflow:
+
+1. Builds the CIMET project with Maven.
+2. Creates a temporary `config.json` pointing to the selected Spinnaker ref.
+3. Executes the Excel output runner (`mvn exec:java -Dexec.mainClass=edu.university.ecs.lab.detection.ExcelOutputRunner -Dexec.args="./config.json"`).
+4. Uploads the resulting Excel workbook located at `output/Spinnaker/output-Spinnaker.xlsx` as an artifact.
+
+## Running the Excel output runner locally
+
+To generate the Excel workbook locally, compile the project and then execute the runner, optionally passing a custom configuration file path:
+
+```bash
+mvn clean install -DskipTests
+mvn exec:java \
+  -Dexec.mainClass=edu.university.ecs.lab.detection.ExcelOutputRunner \
+  -Dexec.args="/path/to/config.json" \
+  -DskipTests
+```
+
+If no argument is provided, the runner defaults to `./config.json` in the project root. The Excel workbook is written to `output/<repo-name>/output-<system-name>.xlsx`.
