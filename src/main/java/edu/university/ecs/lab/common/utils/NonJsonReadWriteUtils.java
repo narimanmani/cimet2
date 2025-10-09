@@ -123,25 +123,32 @@ public class NonJsonReadWriteUtils {
                 if (line.endsWith("{")) {
                     String key = line.substring(0, line.length() - 1).trim();
                     JsonObject newObject = new JsonObject();
-                    jsonStack.peek().add(key, newObject);
+                    if (!jsonStack.isEmpty()) {
+                        jsonStack.peek().add(key, newObject);
+                    }
                     jsonStack.push(newObject);
                     currentKey = key;
                 } else if (line.equals("}")) {
-                    jsonStack.pop();
+                    if (jsonStack.size() > 1) {
+                        jsonStack.pop();
+                    }
                     currentKey = null;
                 } else if (line.contains("=")) {
                     String[] parts = line.split("=", 2);
                     if (parts.length == 2) {
                         String key = parts[0].trim();
                         String value = parts[1].trim().replace("'", "\"");
-                        jsonStack.peek().addProperty(key, value);
+                        if (!jsonStack.isEmpty()) {
+                            jsonStack.peek().addProperty(key, value);
+                        }
                     }
                 } else {
-                    if (currentKey != null) {
-                        JsonArray array = jsonStack.peek().has(currentKey) ?
-                                jsonStack.peek().getAsJsonArray(currentKey) : new JsonArray();
+                    if (currentKey != null && !jsonStack.isEmpty()) {
+                        JsonObject currentObject = jsonStack.peek();
+                        JsonArray array = currentObject.has(currentKey) ?
+                                currentObject.getAsJsonArray(currentKey) : new JsonArray();
                         array.add(line);
-                        jsonStack.peek().add(currentKey, array);
+                        currentObject.add(currentKey, array);
                     }
                 }
             }
