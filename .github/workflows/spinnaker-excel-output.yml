@@ -1,0 +1,55 @@
+name: Run Excel output (CIMET detection module) for Spinnaker
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: 'Git ref (branch or tag) of spinnaker/spinnaker to analyse'
+        required: false
+        default: 'main'
+
+jobs:
+  excel-output:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout CIMET
+        uses: actions/checkout@v4
+
+      - name: Set up Temurin JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: maven
+
+      - name: Build CIMET
+        run: mvn -B -ntp clean install -DskipTests
+
+      - name: Prepare Spinnaker configuration
+        env:
+          TARGET_REF: ${{ inputs.ref || 'main' }}
+        run: |
+          cat <<JSON > config.json
+          {
+            "systemName": "Spinnaker",
+            "repositoryURL": "https://github.com/spinnaker/spinnaker.git",
+            "branch": "${TARGET_REF}",
+            "baseBranch": "${TARGET_REF}"
+          }
+          JSON
+
+      - name: Run Excel output detection
+        run: mvn -B -ntp exec:java -Dexec.mainClass=edu.university.ecs.lab.detection.ExcelOutputRunner -Dexec.args="./config.json" -DskipTests
+
+      - name: List generated Excel artifacts
+        run: |
+          echo "Workspace contents:"
+          ls -R output || true
+
+      - name: Upload Excel report
+        uses: actions/upload-artifact@v4
+        with:
+          name: spinnaker-excel-output-${{ github.run_id }}
+          path: |
+            output/Spinnaker/output-Spinnaker.xlsx
+          if-no-files-found: error

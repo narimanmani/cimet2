@@ -14,6 +14,9 @@ public class ExcelOutputRunner {
 
     public static void main(String[] args) throws IOException {
         String configPath = "./config.json";
+        if (args != null && args.length > 0 && args[0] != null && !args[0].isBlank()) {
+            configPath = args[0];
+        }
         try {
             File conifgFile = new File(configPath);
             if (!conifgFile.exists()) {
