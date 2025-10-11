@@ -34,6 +34,7 @@ jobs:
           print((datetime.datetime.utcnow() - datetime.timedelta(days=60)).strftime('%Y-%m-%d'))
           PY
           )"
+          echo "DELTA_WINDOW_START=$SINCE" >> "$GITHUB_ENV"
           mkdir -p clone
           git clone \
             --branch "$TARGET_REF" \
@@ -46,6 +47,21 @@ jobs:
           if [ "$COMMIT_COUNT" -lt 2 ]; then
             git fetch --depth=$((2 - COMMIT_COUNT + 1)) origin "$TARGET_REF"
           fi
+          DELTA_HEAD=$(git rev-parse HEAD)
+          DELTA_HEAD_INFO=$(git show -s --format='%cI %s' HEAD)
+          if git rev-parse HEAD~1 >/dev/null 2>&1; then
+            DELTA_BASE=$(git rev-parse HEAD~1)
+            DELTA_BASE_INFO=$(git show -s --format='%cI %s' HEAD~1)
+          else
+            DELTA_BASE=""
+            DELTA_BASE_INFO="(not available)"
+          fi
+          {
+            echo "DELTA_HEAD=$DELTA_HEAD"
+            echo "DELTA_HEAD_INFO=$DELTA_HEAD_INFO"
+            echo "DELTA_BASE=$DELTA_BASE"
+            echo "DELTA_BASE_INFO=$DELTA_BASE_INFO"
+          } >> "$GITHUB_ENV"
           echo "Most recent commits in scope:"
           git log -2 --pretty=format:'%H %cI %s'
 
@@ -70,10 +86,26 @@ jobs:
           echo "Workspace contents:"
           ls -R output || true
 
+      - name: Publish delta summary
+        env:
+          DELTA_WINDOW_START: ${{ env.DELTA_WINDOW_START }}
+          DELTA_HEAD: ${{ env.DELTA_HEAD }}
+          DELTA_BASE: ${{ env.DELTA_BASE }}
+          DELTA_HEAD_INFO: ${{ env.DELTA_HEAD_INFO }}
+          DELTA_BASE_INFO: ${{ env.DELTA_BASE_INFO }}
+        run: |
+          {
+            echo "## Delta configuration"
+            echo "- Delta window start: ${DELTA_WINDOW_START:-unknown}"
+            echo "- Current commit: ${DELTA_HEAD:-unknown} ${DELTA_HEAD_INFO:+(${DELTA_HEAD_INFO})}"
+            echo "- Previous commit: ${DELTA_BASE:-unknown} ${DELTA_BASE_INFO:+(${DELTA_BASE_INFO})}"
+          } >> "$GITHUB_STEP_SUMMARY"
+
       - name: Upload Excel artifact
         uses: actions/upload-artifact@v4
         with:
           name: spinnaker-detection-${{ github.run_id }}
           path: |
             output/spinnaker/output-Spinnaker.xlsx
+            output/spinnaker/**/*.json
           if-no-files-found: error
