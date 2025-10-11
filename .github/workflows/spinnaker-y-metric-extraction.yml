@@ -75,5 +75,5 @@ jobs:
         with:
           name: spinnaker-detection-${{ github.run_id }}
           path: |
-            output/Spinnaker/output-Spinnaker.xlsx
+            output/spinnaker/output-Spinnaker.xlsx
           if-no-files-found: error
