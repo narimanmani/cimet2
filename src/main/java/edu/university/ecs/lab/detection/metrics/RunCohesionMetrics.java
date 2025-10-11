@@ -34,7 +34,15 @@ public class RunCohesionMetrics {
 
         MetricResultCalculation metricResultCalculation = new MetricResultCalculation();
 
+        if (microserviceSystem == null || microserviceSystem.getMicroservices() == null) {
+            return metricResultCalculation;
+        }
+
         for (Microservice microservice : microserviceSystem.getMicroservices()) {
+
+            if (microservice == null) {
+                continue;
+            }
 
             IServiceDescriptor serviceDescriptor = new ServiceDescriptor();
 
