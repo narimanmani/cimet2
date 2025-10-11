@@ -25,8 +25,19 @@ public class WobblyServiceInteractionService {
     public WobblyServiceInteraction findWobblyServiceInteractions(MicroserviceSystem currentSystem) {
         List<String> wobblyInteractions = new ArrayList<>();
 
+        if (currentSystem == null || currentSystem.getMicroservices() == null) {
+            return new WobblyServiceInteraction(wobblyInteractions);
+        }
+
         for (Microservice microservice : currentSystem.getMicroservices()) {
+            if (microservice == null) {
+                continue;
+            }
+
             Set<JClass> classes = microservice.getClasses();
+            if (classes == null) {
+                continue;
+            }
 
             for (JClass jClass : classes) {
                 boolean hasCircuitBreaker = false;
