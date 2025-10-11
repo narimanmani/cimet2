@@ -171,14 +171,15 @@ Supplying a different branch or tag in the workflow dispatch form adjusts both c
 
 ### Spinnaker ISAR metrics workflow
 
-Use the `.github/workflows/spinnaker-metric-extraction.yml` workflow to run CIMET's ISAR metrics module against [spinnaker/spinnaker](https://github.com/spinnaker/spinnaker). Launch **Run metric extraction (CIMET's ISAR metrics module)** from the **Actions** tab and provide an optional branch or tag (default `main`).
+Use the `.github/workflows/spinnaker-metric-extraction.yml` workflow to run CIMET's Excel-based detection pipeline (which includes ISAR metrics and anti-pattern counts) against [spinnaker/spinnaker](https://github.com/spinnaker/spinnaker). Launch **Run metric extraction (CIMET's ISAR metrics module)** from the **Actions** tab and provide an optional branch or tag (default `main`).
 
 The workflow performs the following steps:
 
 1. Builds the CIMET project with Maven.
-2. Generates a temporary `config.json` targeting the desired branch of Spinnaker.
-3. Executes the ISAR metrics runner (`mvn exec:java -Dexec.mainClass=edu.university.ecs.lab.detection.metrics.MetricCalculation`).
-4. Uploads the generated `output/metrics-summary.txt` artifact so you can review the reported cohesion and coupling metrics.
+2. Creates a shallow clone of Spinnaker that is restricted to the last ~60 days of history to ensure at least two recent commits are available for analysis.
+3. Generates a temporary `config.json` targeting the desired branch of Spinnaker.
+4. Executes the Excel output runner (`mvn exec:java -Dexec.mainClass=edu.university.ecs.lab.detection.ExcelOutputRunner -Dexec.args="./config.json"`).
+5. Uploads the resulting Excel workbook located at `output/Spinnaker/output-Spinnaker.xlsx` as an artifact so you can inspect metrics and anti-pattern results.
 
 ### Spinnaker Excel detection workflow
 
