@@ -25,6 +25,30 @@ jobs:
       - name: Build Cimet
         run: mvn -B -ntp clean install -DskipTests
 
+      - name: Prepare shallow Spinnaker clone
+        env:
+          TARGET_REF: ${{ inputs.ref || 'main' }}
+        run: |
+          SINCE="$(python - <<'PY'
+import datetime
+print((datetime.datetime.utcnow() - datetime.timedelta(days=60)).strftime('%Y-%m-%d'))
+PY
+)"
+          mkdir -p clone
+          git clone \
+            --branch "$TARGET_REF" \
+            --single-branch \
+            --shallow-since="$SINCE" \
+            https://github.com/spinnaker/spinnaker.git \
+            clone/spinnaker
+          cd clone/spinnaker
+          COMMIT_COUNT=$(git rev-list --count HEAD)
+          if [ "$COMMIT_COUNT" -lt 2 ]; then
+            git fetch --depth=$((2 - COMMIT_COUNT + 1)) origin "$TARGET_REF"
+          fi
+          echo "Most recent commits in scope:"
+          git log -2 --pretty=format:'%H %cI %s'
+
       - name: Prepare Spinnaker configuration
         env:
           TARGET_REF: ${{ inputs.ref || 'main' }}
@@ -38,18 +62,18 @@ jobs:
           }
           JSON
 
-      - name: Run CIMET ISAR metrics extraction
-        run: mvn exec:java -Dexec.mainClass=edu.university.ecs.lab.detection.metrics.MetricCalculation -Dexec.args="./config.json" -DskipTests
+      - name: Run Excel output detection
+        run: mvn exec:java -Dexec.mainClass=edu.university.ecs.lab.detection.ExcelOutputRunner -Dexec.args="./config.json" -DskipTests
 
       - name: List generated artifacts
         run: |
           echo "Workspace contents:"
           ls -R output || true
 
-      - name: Upload metrics artifact
+      - name: Upload Excel artifact
         uses: actions/upload-artifact@v4
         with:
-          name: spinnaker-metrics-${{ github.run_id }}
+          name: spinnaker-detection-${{ github.run_id }}
           path: |
-            output/metrics-summary.txt
+            output/Spinnaker/output-Spinnaker.xlsx
           if-no-files-found: error
