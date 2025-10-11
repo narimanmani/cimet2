@@ -65,6 +65,9 @@ public class WobblyServiceInteractionService {
                     // Add each method with CircuitBreaker, RateLimiter, Retry, and Bulkhead annotations to 
                     // wobblyInteractions list
                     if (hasCircuitBreaker && hasRateLimiter && hasRetry && hasBulkhead) {
+                        if (microservice == null) {
+                            throw new IllegalStateException("Microservice object is null");
+                        }
                         String interaction = microservice.getName() + "." + jClass.getName() + "." + method.getName();
                         wobblyInteractions.add(interaction);
                         

@@ -106,6 +106,9 @@ public class MicroserviceSystem implements JsonSerializable {
             if (file != null && file.getPath() != null && microservice.getPath() != null && file.getPath().contains(microservice.getPath())) {
                 if(file.getFileType().equals(FileType.JCLASS)) {
                     JClass jClass = (JClass) file;
+                    if (microservice == null) {
+                        throw new IllegalStateException("Microservice object is null");
+                    }
                     jClass.updateMicroserviceName(microservice.getName());
                     microservice.addJClass(jClass);
                     updatedOrphans.remove(file);
@@ -205,6 +208,9 @@ public class MicroserviceSystem implements JsonSerializable {
 
             for(ProjectFile file : microservice.getFiles()) {
                 if(file != null && path.equals(file.getPath())) {
+                    if (microservice == null) {
+                        throw new IllegalStateException("Microservice object is null");
+                    }
                     return microservice.getName();
                 }
             }

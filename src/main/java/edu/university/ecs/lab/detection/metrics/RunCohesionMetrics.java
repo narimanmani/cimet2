@@ -46,6 +46,10 @@ public class RunCohesionMetrics {
 
             IServiceDescriptor serviceDescriptor = new ServiceDescriptor();
 
+            if (microservice == null) {
+                throw new IllegalStateException("Microservice object is null");
+            }
+
             serviceDescriptor.setServiceName(microservice.getName());
 
             for (JClass controller : microservice.getControllers()) {
@@ -54,6 +58,9 @@ public class RunCohesionMetrics {
 
                 for (Method method : controller.getMethods()) {
                     Operation operation = new Operation();
+                    if (microservice == null) {
+                        throw new IllegalStateException("Microservice object is null");
+                    }
                     String operationName = microservice.getName() + "::" + method.getName();
                     operation.setResponseType(method.getReturnType());
                     operation.setName(operationName);

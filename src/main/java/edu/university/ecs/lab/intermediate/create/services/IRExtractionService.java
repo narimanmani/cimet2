@@ -239,6 +239,9 @@ public class IRExtractionService {
                         }
 
                     } else {
+                        if (microservice == null) {
+                            throw new IllegalStateException("Microservice object is null");
+                        }
                         JClass jClass = SourceToObjectUtils.parseClass(file, config, microservice.getName());
                         if (jClass != null) {
                             microservice.addJClass(jClass);

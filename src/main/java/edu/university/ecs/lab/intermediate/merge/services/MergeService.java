@@ -207,7 +207,12 @@ public class MergeService {
                         // Here we must check if any orphans are waiting on this creation
                         microserviceSystem.adopt(microservice);
                         microserviceSystem.getMicroservices().add(microservice);
-                        LoggerManager.debug(() -> "[Microservice added]  " + microservice.getName() + " " + microservice.getPath() + " at " + systemChange.getOldCommit() + " -> " + systemChange.getNewCommit());
+                        if (microservice == null) {
+                            throw new IllegalStateException("Microservice object is null");
+                        }
+                        final String addedMicroserviceName = microservice.getName();
+                        final String addedMicroservicePath = microservice.getPath();
+                        LoggerManager.debug(() -> "[Microservice added]  " + addedMicroserviceName + " " + addedMicroservicePath + " at " + systemChange.getOldCommit() + " -> " + systemChange.getNewCommit());
                         break;
 
 
@@ -222,7 +227,12 @@ public class MergeService {
                         // Here we must orphan all the classes of this microservice
                         microserviceSystem.getMicroservices().remove(microservice);
                         microserviceSystem.orphanize(microservice);
-                        LoggerManager.debug(() -> "[Microservice removed]  " + microservice.getName() + " " + microservice.getPath() + " at " + systemChange.getOldCommit() + " -> " + systemChange.getNewCommit());
+                        if (microservice == null) {
+                            throw new IllegalStateException("Microservice object is null");
+                        }
+                        final String removedMicroserviceName = microservice.getName();
+                        final String removedMicroservicePath = microservice.getPath();
+                        LoggerManager.debug(() -> "[Microservice removed]  " + removedMicroserviceName + " " + removedMicroservicePath + " at " + systemChange.getOldCommit() + " -> " + systemChange.getNewCommit());
                         break;
 
                 }
@@ -311,6 +321,9 @@ public class MergeService {
     private String getMicroserviceNameFromPath(String path) {
         for (Microservice microservice : microserviceSystem.getMicroservices()) {
             if (path.contains(microservice.getPath())) {
+                if (microservice == null) {
+                    throw new IllegalStateException("Microservice object is null");
+                }
                 return microservice.getName();
             }
         }
