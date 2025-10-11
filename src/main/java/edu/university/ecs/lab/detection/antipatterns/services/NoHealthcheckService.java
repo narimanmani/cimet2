@@ -35,6 +35,9 @@ public class NoHealthcheckService {
             }
 
             if (microservice.getFiles() == null || microservice.getFiles().isEmpty()){
+                if (microservice == null) {
+                    throw new IllegalStateException("Microservice object is null");
+                }
                 noHealthCheckMap.put(microservice.getName(), false);
                 continue;
             }
@@ -48,14 +51,23 @@ public class NoHealthcheckService {
                     JsonObject data = configFile.getData();
                     if (data != null){
                         if (containsHealthCheck(data)){
+                            if (microservice == null) {
+                                throw new IllegalStateException("Microservice object is null");
+                            }
                             noHealthCheckMap.put(microservice.getName(), true);
                         }
                         else{
+                            if (microservice == null) {
+                                throw new IllegalStateException("Microservice object is null");
+                            }
                             noHealthCheckMap.put(microservice.getName(), false);
                         }
                     }
                 }
                 else{
+                    if (microservice == null) {
+                        throw new IllegalStateException("Microservice object is null");
+                    }
                     noHealthCheckMap.put(microservice.getName(), false);
                 }
             }

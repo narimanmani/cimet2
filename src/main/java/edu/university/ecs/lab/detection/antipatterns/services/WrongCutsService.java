@@ -30,6 +30,9 @@ public class WrongCutsService {
             }
 
             if (microservice.getRepositories() == null || microservice.getRepositories().isEmpty()){
+                if (microservice == null) {
+                    throw new IllegalStateException("Microservice object is null");
+                }
                 wrongCutServices.add(microservice.getName());
             }
         }

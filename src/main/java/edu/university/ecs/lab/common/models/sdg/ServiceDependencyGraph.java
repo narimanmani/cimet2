@@ -77,6 +77,9 @@ public class ServiceDependencyGraph extends DirectedWeightedMultigraph<Microserv
 
         // Add microservices, rest calls, and enpoints to respective lists, add microservice to graph as a vertex
         microserviceSystem.getMicroservices().forEach(microservice -> {
+            if (microservice == null) {
+                throw new IllegalStateException("Microservice object is null");
+            }
             ms.put(microservice.getName(), microservice);
             this.addVertex(microservice);
             restCalls.addAll(microservice.getRestCalls());
@@ -110,6 +113,9 @@ public class ServiceDependencyGraph extends DirectedWeightedMultigraph<Microserv
         @Override
         public JsonElement serialize(Microservice microservice, Type type, JsonSerializationContext jsonSerializationContext) {
             JsonObject jsonObject = new JsonObject();
+            if (microservice == null) {
+                throw new IllegalStateException("Microservice object is null");
+            }
             jsonObject.addProperty("name", microservice.getName());
             return jsonObject;
         }
