@@ -25,12 +25,26 @@ public class NoHealthcheckService {
     public NoHealthcheck checkHealthcheck(MicroserviceSystem microserviceSystem) {
         Map<String, Boolean> noHealthCheckMap = new HashMap<>();
 
+        if (microserviceSystem == null || microserviceSystem.getMicroservices() == null) {
+            return new NoHealthcheck(noHealthCheckMap);
+        }
+
         for (Microservice microservice : microserviceSystem.getMicroservices()){
-            if (microservice.getFiles().isEmpty()){
-                noHealthCheckMap.put(microservice.getName(), false);
+            if (microservice == null) {
+                continue;
             }
+
+            if (microservice.getFiles() == null || microservice.getFiles().isEmpty()){
+                noHealthCheckMap.put(microservice.getName(), false);
+                continue;
+            }
+
             for (ConfigFile configFile : microservice.getFiles()){
-                if (configFile.getName().equals("application.yml") && configFile.getFileType().equals(FileType.CONFIG)){
+                if (configFile == null) {
+                    continue;
+                }
+
+                if ("application.yml".equals(configFile.getName()) && FileType.CONFIG.equals(configFile.getFileType())){
                     JsonObject data = configFile.getData();
                     if (data != null){
                         if (containsHealthCheck(data)){

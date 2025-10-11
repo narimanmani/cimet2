@@ -20,8 +20,16 @@ public class WrongCutsService {
     public WrongCuts detectWrongCuts(MicroserviceSystem currentSystem) {
         List<String> wrongCutServices = new ArrayList<>();
 
+        if (currentSystem == null || currentSystem.getMicroservices() == null) {
+            return new WrongCuts(wrongCutServices);
+        }
+
         for (Microservice microservice : currentSystem.getMicroservices()){
-            if (microservice.getRepositories().isEmpty()){
+            if (microservice == null) {
+                continue;
+            }
+
+            if (microservice.getRepositories() == null || microservice.getRepositories().isEmpty()){
                 wrongCutServices.add(microservice.getName());
             }
         }
