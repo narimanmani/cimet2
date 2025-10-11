@@ -1,4 +1,4 @@
-name: Run 22 metric extraction (CIMET's ISAR metrics module)
+name: metrics
 
 on:
   workflow_dispatch:
