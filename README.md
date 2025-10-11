@@ -179,7 +179,7 @@ The workflow performs the following steps:
 2. Creates a shallow clone of Spinnaker that is restricted to the last ~60 days of history to ensure at least two recent commits are available for analysis.
 3. Generates a temporary `config.json` targeting the desired branch of Spinnaker.
 4. Executes the Excel output runner (`mvn exec:java -Dexec.mainClass=edu.university.ecs.lab.detection.ExcelOutputRunner -Dexec.args="./config.json"`).
-5. Uploads the resulting Excel workbook located at `output/Spinnaker/output-Spinnaker.xlsx` as an artifact so you can inspect metrics and anti-pattern results.
+5. Uploads the resulting Excel workbook located at `output/spinnaker/output-Spinnaker.xlsx` as an artifact so you can inspect metrics and anti-pattern results.
 
 ### Spinnaker Excel detection workflow
 
@@ -190,7 +190,7 @@ This workflow:
 1. Builds the CIMET project with Maven.
 2. Creates a temporary `config.json` pointing to the selected Spinnaker ref.
 3. Executes the Excel output runner (`mvn exec:java -Dexec.mainClass=edu.university.ecs.lab.detection.ExcelOutputRunner -Dexec.args="./config.json"`).
-4. Uploads the resulting Excel workbook located at `output/Spinnaker/output-Spinnaker.xlsx` as an artifact.
+4. Uploads the resulting Excel workbook located at `output/spinnaker/output-Spinnaker.xlsx` as an artifact.
 
 ## Running the Excel output runner locally
 
