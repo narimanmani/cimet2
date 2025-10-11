@@ -8,7 +8,9 @@ import edu.university.ecs.lab.common.models.ir.MicroserviceSystem;
 import edu.university.ecs.lab.detection.antipatterns.models.WobblyServiceInteraction;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
+import java.util.Optional;
 import java.util.Set;
 
 /**
@@ -34,8 +36,8 @@ public class WobblyServiceInteractionService {
                 continue;
             }
 
-            Set<JClass> classes = microservice.getClasses();
-            if (classes == null) {
+            Set<JClass> classes = Optional.ofNullable(microservice.getClasses()).orElse(Collections.emptySet());
+            if (classes.isEmpty()) {
                 continue;
             }
 
