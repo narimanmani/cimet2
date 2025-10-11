@@ -137,7 +137,8 @@ public class DetectionService {
 
             // Read in the old system
             String oldIRPath = BASE_IR_PATH + (i+1) + "_" + commitIdOld.substring(0, 4) +".json";
-            MicroserviceSystem oldSystem = JsonReadWriteUtils.readFromJSON(oldIRPath, MicroserviceSystem.class);
+            MicroserviceSystem oldSystem = sanitizeMicroserviceSystem(
+                    JsonReadWriteUtils.readFromJSON(oldIRPath, MicroserviceSystem.class));
 
             // Extract changes from one commit to the other
             if(i < commits.size() - 1) {
@@ -153,7 +154,8 @@ public class DetectionService {
                 mergeService.generateMergeIR(commitIdNew.substring(0, 4));
 
                 // Read in the new system and system change
-                newSystem = JsonReadWriteUtils.readFromJSON(newIRPath, MicroserviceSystem.class);
+                newSystem = sanitizeMicroserviceSystem(
+                        JsonReadWriteUtils.readFromJSON(newIRPath, MicroserviceSystem.class));
                 systemChange = JsonReadWriteUtils.readFromJSON(deltaPath, SystemChange.class);
             }
 
@@ -398,5 +400,32 @@ public class DetectionService {
         }
 
         return outerArray;
+    }
+
+    /**
+     * Ensure MicroserviceSystem instances loaded from disk are safe to use by
+     * replacing null collections and pruning stray null entries.
+     *
+     * @param system the MicroserviceSystem to sanitize
+     * @return the sanitized MicroserviceSystem instance
+     */
+    private MicroserviceSystem sanitizeMicroserviceSystem(MicroserviceSystem system) {
+        if (system == null) {
+            return new MicroserviceSystem(config.getSystemName(), "", new HashSet<>(), new HashSet<>());
+        }
+
+        if (system.getMicroservices() == null) {
+            system.setMicroservices(new HashSet<>());
+        } else {
+            system.getMicroservices().removeIf(Objects::isNull);
+        }
+
+        if (system.getOrphans() == null) {
+            system.setOrphans(new HashSet<>());
+        } else {
+            system.getOrphans().removeIf(Objects::isNull);
+        }
+
+        return system;
     }
 }
