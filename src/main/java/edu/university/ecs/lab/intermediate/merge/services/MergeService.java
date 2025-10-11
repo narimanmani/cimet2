@@ -207,9 +207,6 @@ public class MergeService {
                         // Here we must check if any orphans are waiting on this creation
                         microserviceSystem.adopt(microservice);
                         microserviceSystem.getMicroservices().add(microservice);
-                        if (microservice == null) {
-                            throw new IllegalStateException("Microservice object is null");
-                        }
                         final String addedMicroserviceName = microservice.getName();
                         final String addedMicroservicePath = microservice.getPath();
                         LoggerManager.debug(() -> "[Microservice added]  " + addedMicroserviceName + " " + addedMicroservicePath + " at " + systemChange.getOldCommit() + " -> " + systemChange.getNewCommit());
@@ -222,14 +219,12 @@ public class MergeService {
                         // If a less
                         if (microservice == null) {
                             LoggerManager.error(() -> "[Microservice not found]  " + delta.getOldPath() + " at " + systemChange.getOldCommit() + " -> " + systemChange.getNewCommit(), Optional.of(new RuntimeException("Fail")));
+                            break;
                         }
 
                         // Here we must orphan all the classes of this microservice
                         microserviceSystem.getMicroservices().remove(microservice);
                         microserviceSystem.orphanize(microservice);
-                        if (microservice == null) {
-                            throw new IllegalStateException("Microservice object is null");
-                        }
                         final String removedMicroserviceName = microservice.getName();
                         final String removedMicroservicePath = microservice.getPath();
                         LoggerManager.debug(() -> "[Microservice removed]  " + removedMicroserviceName + " " + removedMicroservicePath + " at " + systemChange.getOldCommit() + " -> " + systemChange.getNewCommit());
