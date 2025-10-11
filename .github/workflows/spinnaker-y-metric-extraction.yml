@@ -30,10 +30,10 @@ jobs:
           TARGET_REF: ${{ inputs.ref || 'main' }}
         run: |
           SINCE="$(python - <<'PY'
-import datetime
-print((datetime.datetime.utcnow() - datetime.timedelta(days=60)).strftime('%Y-%m-%d'))
-PY
-)"
+          import datetime
+          print((datetime.datetime.utcnow() - datetime.timedelta(days=60)).strftime('%Y-%m-%d'))
+          PY
+          )"
           mkdir -p clone
           git clone \
             --branch "$TARGET_REF" \
