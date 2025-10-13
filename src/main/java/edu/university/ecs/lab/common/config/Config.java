@@ -34,6 +34,16 @@ public class Config {
      */
     private final String branch;
 
+    /**
+     * Optional inclusive start date (ISO-8601 format) for commit analysis.
+     */
+    private String startDate;
+
+    /**
+     * Optional inclusive end date (ISO-8601 format) for commit analysis.
+     */
+    private String endDate;
+
 
     public Config(String systemName, String repositoryURL, String branch) throws Exception {
         validateConfig(systemName, repositoryURL, branch);
