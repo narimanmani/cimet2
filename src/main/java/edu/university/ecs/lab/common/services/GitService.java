@@ -16,6 +16,11 @@ import org.eclipse.jgit.treewalk.TreeWalk;
 
 import java.io.File;
 import java.nio.charset.StandardCharsets;
+import java.time.Instant;
+import java.time.LocalDate;
+import java.time.ZoneOffset;
+import java.time.format.DateTimeParseException;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
@@ -259,15 +264,69 @@ public class GitService {
      * @return Git log as a list
      */
     public Iterable<RevCommit> getLog() {
-        Iterable<RevCommit> returnList = null;
+        List<RevCommit> commits = new ArrayList<>();
 
         try (Git git = new Git(repository)) {
-            returnList = git.log().call();
+            Iterable<RevCommit> log = git.log().call();
+            for (RevCommit commit : log) {
+                commits.add(commit);
+            }
         } catch (Exception e) {
             Error.reportAndExit(Error.GIT_FAILED, Optional.of(e));
         }
 
-        return returnList;
+        return filterCommitsByDate(commits);
+    }
+
+    private List<RevCommit> filterCommitsByDate(List<RevCommit> commits) {
+        Optional<Instant> startInstant = parseConfigDate(config.getStartDate(), true);
+        Optional<Instant> endInstantExclusive = parseConfigDate(config.getEndDate(), false);
+
+        if (startInstant.isEmpty() && endInstantExclusive.isEmpty()) {
+            return commits;
+        }
+
+        if (startInstant.isPresent() && endInstantExclusive.isPresent()
+                && !startInstant.get().isBefore(endInstantExclusive.get())) {
+            Error.reportAndExit(Error.INVALID_CONFIG,
+                    Optional.of(new IllegalArgumentException("Start date must be before end date")));
+        }
+
+        List<RevCommit> filteredCommits = new ArrayList<>();
+
+        for (RevCommit commit : commits) {
+            Instant commitInstant = Instant.ofEpochSecond(commit.getCommitTime());
+
+            if (startInstant.isPresent() && commitInstant.isBefore(startInstant.get())) {
+                continue;
+            }
+
+            if (endInstantExclusive.isPresent() && !commitInstant.isBefore(endInstantExclusive.get())) {
+                continue;
+            }
+
+            filteredCommits.add(commit);
+        }
+
+        return filteredCommits;
+    }
+
+    private Optional<Instant> parseConfigDate(String date, boolean inclusiveStart) {
+        if (Objects.isNull(date) || date.isBlank()) {
+            return Optional.empty();
+        }
+
+        try {
+            LocalDate localDate = LocalDate.parse(date);
+            if (inclusiveStart) {
+                return Optional.of(localDate.atStartOfDay(ZoneOffset.UTC).toInstant());
+            }
+            return Optional.of(localDate.plusDays(1).atStartOfDay(ZoneOffset.UTC).toInstant());
+        } catch (DateTimeParseException e) {
+            Error.reportAndExit(Error.INVALID_CONFIG, Optional.of(e));
+        }
+
+        return Optional.empty();
     }
 
     /**
