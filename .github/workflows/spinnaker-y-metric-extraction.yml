@@ -90,7 +90,11 @@ jobs:
           JSON
 
       - name: Run Excel output detection
-        run: mvn exec:java -Dexec.mainClass=edu.university.ecs.lab.detection.ExcelOutputRunner -Dexec.args="./config.json" -DskipTests
+        run: >
+          mvn exec:java \
+            -Dexec.mainClass=edu.university.ecs.lab.detection.ExcelOutputRunner \
+            -Dexec.args="./config.json" \
+            -DskipTests
 
       - name: List generated artifacts
         run: |
