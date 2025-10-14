@@ -33,7 +33,9 @@ import java.nio.file.Files;
 import java.nio.file.Paths;
 import java.nio.file.StandardCopyOption;
 import java.time.Instant;
+import java.time.LocalDate;
 import java.time.ZoneOffset;
+import java.time.temporal.WeekFields;
 import java.util.*;
 
 /**
@@ -49,6 +51,8 @@ public class DetectionService {
             "No API Gateway", "maxAIS", "avgAIS", "stdAIS", "maxADS", "ADCS", "stdADS", "maxACS", "avgACS", "stdACS", "SCF", "SIY", "maxSC", "avgSC",
             "stdSC", "SCCmodularity", "maxSIDC", "avgSIDC", "stdSIDC", "maxSSIC", "avgSSIC", "stdSSIC",
             "maxLOMLC", "avgLOMLC", "stdLOMLC"};
+
+    private static final WeekFields WEEK_FIELDS = WeekFields.ISO;
     
     /**
      * Count of antipatterns, metrics, and architectural rules
@@ -115,6 +119,8 @@ public class DetectionService {
         // Write the initial row as empty
         writeEmptyRow(1);
 
+        Map<String, WeeklySummary> weeklySummaries = new LinkedHashMap<>();
+
         // Starting at the first commit until commits - 1
         for (int i = 0; i < commits.size(); i++) {
             MicroserviceSystem newSystem = null;
@@ -138,13 +144,11 @@ public class DetectionService {
             commitIdCell.setCellValue(commitIdOld);
 
             // Set the commit date as the second cell value
+            LocalDate commitDate = Instant.ofEpochSecond(commits.get(i).getCommitTime())
+                    .atZone(ZoneOffset.UTC)
+                    .toLocalDate();
             Cell commitDateCell = row.createCell(1);
-            commitDateCell.setCellValue(
-                    Instant.ofEpochSecond(commits.get(i).getCommitTime())
-                            .atZone(ZoneOffset.UTC)
-                            .toLocalDate()
-                            .toString()
-            );
+            commitDateCell.setCellValue(commitDate.toString());
 
             // Read in the old system
             String oldIRPath = BASE_IR_PATH + (i+1) + "_" + commitIdOld.substring(0, 4) +".json";
@@ -172,8 +176,8 @@ public class DetectionService {
 
             // Init all the lists/maps
             List<AbstractAR> rules = new ArrayList<>();
-            Map<String, Integer> antipatterns = new HashMap<>();
-            HashMap<String, Double> metrics = new HashMap<>();
+            Map<String, Integer> antipatterns = createDefaultAntipatternMap();
+            Map<String, Double> metrics = createDefaultMetricMap();
 
             // We can detect/update if there are >= 1 microservices
             if (Objects.nonNull(oldSystem.getMicroservices()) && !oldSystem.getMicroservices().isEmpty()) {
@@ -183,6 +187,8 @@ public class DetectionService {
                 updateAntiPatterns(currIndex, antipatterns);
                 updateMetrics(currIndex, metrics);
             }
+
+            updateWeeklySummary(weeklySummaries, commitDate, antipatterns, metrics);
 
             // For simplicity we will skip rules on the last iteration since there is no newSystem
 //            if(i < commits.size() - 1) {
@@ -200,6 +206,8 @@ public class DetectionService {
             //     System.exit(1);
             // }
         }
+
+        writeWeeklyAnalysis(weeklySummaries);
 
         // At the end we write the workbook to file
         try (FileOutputStream fileOut = new FileOutputStream(String.format("./output/%s/output-%s.xlsx",config.getRepoName(), config.getSystemName()))) {
@@ -398,8 +406,98 @@ public class DetectionService {
     }
 
     /**
+     * Create a map containing default anti-pattern values.
+     *
+     * @return map of anti-pattern labels to default values
+     */
+    private Map<String, Integer> createDefaultAntipatternMap() {
+        Map<String, Integer> defaults = new LinkedHashMap<>();
+        for (int i = 0; i < ANTIPATTERNS; i++) {
+            String label = columnLabels[i + 2];
+            defaults.put(label, "No API Gateway".equals(label) ? 1 : 0);
+        }
+        return defaults;
+    }
+
+    /**
+     * Create a map containing default metric values.
+     *
+     * @return map of metric labels to default values
+     */
+    private Map<String, Double> createDefaultMetricMap() {
+        Map<String, Double> defaults = new LinkedHashMap<>();
+        for (int i = 0; i < METRICS; i++) {
+            defaults.put(columnLabels[i + 2 + ANTIPATTERNS], 0.0);
+        }
+        return defaults;
+    }
+
+    /**
+     * Update the weekly aggregation data with a commit's metrics.
+     *
+     * @param weeklySummaries map storing aggregated values by week
+     * @param commitDate      date of the commit currently being processed
+     * @param antipatterns    anti-pattern counts observed for the commit
+     * @param metrics         metric values observed for the commit
+     */
+    private void updateWeeklySummary(Map<String, WeeklySummary> weeklySummaries, LocalDate commitDate,
+                                     Map<String, Integer> antipatterns, Map<String, Double> metrics) {
+        int weekNumber = commitDate.get(WEEK_FIELDS.weekOfWeekBasedYear());
+        int weekYear = commitDate.get(WEEK_FIELDS.weekBasedYear());
+        String key = String.format("%d-W%02d", weekYear, weekNumber);
+
+        WeeklySummary summary = weeklySummaries.computeIfAbsent(key, unused -> new WeeklySummary(
+                commitDate.with(WEEK_FIELDS.dayOfWeek(), 1),
+                commitDate.with(WEEK_FIELDS.dayOfWeek(), 7)));
+
+        summary.addCommit(antipatterns, metrics);
+    }
+
+    /**
+     * Write a weekly analysis sheet aggregating commit data by ISO week.
+     *
+     * @param weeklySummaries aggregated weekly metrics
+     */
+    private void writeWeeklyAnalysis(Map<String, WeeklySummary> weeklySummaries) {
+        if (weeklySummaries.isEmpty()) {
+            return;
+        }
+
+        XSSFSheet weeklySheet = workbook.createSheet(config.getSystemName() + " Weekly Analysis");
+        Row headerRow = weeklySheet.createRow(0);
+        headerRow.createCell(0).setCellValue("Week Start");
+        headerRow.createCell(1).setCellValue("Week End");
+        headerRow.createCell(2).setCellValue("Commit Count");
+
+        for (int i = 0; i < ANTIPATTERNS; i++) {
+            headerRow.createCell(i + 3).setCellValue(columnLabels[i + 2]);
+        }
+
+        for (int i = 0; i < METRICS; i++) {
+            headerRow.createCell(i + 3 + ANTIPATTERNS).setCellValue(columnLabels[i + 2 + ANTIPATTERNS]);
+        }
+
+        int rowIndex = 1;
+        for (WeeklySummary summary : weeklySummaries.values()) {
+            Row row = weeklySheet.createRow(rowIndex++);
+            row.createCell(0).setCellValue(summary.getWeekStart().toString());
+            row.createCell(1).setCellValue(summary.getWeekEnd().toString());
+            row.createCell(2).setCellValue(summary.getCommitCount());
+
+            int cellIndex = 3;
+            for (int i = 0; i < ANTIPATTERNS; i++) {
+                row.createCell(cellIndex++).setCellValue(summary.getAntiPatternTotal(i));
+            }
+
+            for (int i = 0; i < METRICS; i++) {
+                row.createCell(cellIndex++).setCellValue(summary.getMetricAverage(i));
+            }
+        }
+    }
+
+    /**
      * Create JSON array from list of architectural rule objects
-     * 
+     *
      * @param archRulesList list of AR objects
      * @return JSON array with list entities
      */
@@ -442,5 +540,60 @@ public class DetectionService {
         }
 
         return system;
+    }
+
+    /**
+     * Container for aggregating weekly values before they are written to the workbook.
+     */
+    private static class WeeklySummary {
+        private final LocalDate weekStart;
+        private final LocalDate weekEnd;
+        private int commitCount;
+        private final double[] antiPatternTotals = new double[ANTIPATTERNS];
+        private final double[] metricTotals = new double[METRICS];
+
+        WeeklySummary(LocalDate weekStart, LocalDate weekEnd) {
+            this.weekStart = weekStart;
+            this.weekEnd = weekEnd;
+        }
+
+        void addCommit(Map<String, Integer> antipatterns, Map<String, Double> metrics) {
+            commitCount++;
+
+            for (int i = 0; i < ANTIPATTERNS; i++) {
+                String label = columnLabels[i + 2];
+                double value = antipatterns.getOrDefault(label, "No API Gateway".equals(label) ? 1 : 0);
+                antiPatternTotals[i] += value;
+            }
+
+            for (int i = 0; i < METRICS; i++) {
+                String label = columnLabels[i + 2 + ANTIPATTERNS];
+                double value = metrics.getOrDefault(label, 0.0);
+                metricTotals[i] += value;
+            }
+        }
+
+        LocalDate getWeekStart() {
+            return weekStart;
+        }
+
+        LocalDate getWeekEnd() {
+            return weekEnd;
+        }
+
+        int getCommitCount() {
+            return commitCount;
+        }
+
+        double getAntiPatternTotal(int index) {
+            return antiPatternTotals[index];
+        }
+
+        double getMetricAverage(int index) {
+            if (commitCount == 0) {
+                return 0.0;
+            }
+            return metricTotals[index] / commitCount;
+        }
     }
 }
