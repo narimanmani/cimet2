@@ -32,6 +32,8 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Paths;
 import java.nio.file.StandardCopyOption;
+import java.time.Instant;
+import java.time.ZoneOffset;
 import java.util.*;
 
 /**
@@ -42,7 +44,7 @@ public class DetectionService {
     /**
      * Column labels for violation counts and metrics
      */
-    private static final String[] columnLabels = new String[]{"Commit ID", "Greedy Microservices", "Hub-like Microservices", "Service Chains",
+    private static final String[] columnLabels = new String[]{"Commit ID", "Commit Date", "Greedy Microservices", "Hub-like Microservices", "Service Chains",
             "Wrong Cuts", "Cyclic Dependencies", "Wobbly Service Interactions",  "No Healthchecks",
             "No API Gateway", "maxAIS", "avgAIS", "stdAIS", "maxADS", "ADCS", "stdADS", "maxACS", "avgACS", "stdACS", "SCF", "SIY", "maxSC", "avgSC",
             "stdSC", "SCCmodularity", "maxSIDC", "avgSIDC", "stdSIDC", "maxSSIC", "avgSSIC", "stdSSIC",
@@ -135,6 +137,15 @@ public class DetectionService {
             Cell commitIdCell = row.createCell(0);
             commitIdCell.setCellValue(commitIdOld);
 
+            // Set the commit date as the second cell value
+            Cell commitDateCell = row.createCell(1);
+            commitDateCell.setCellValue(
+                    Instant.ofEpochSecond(commits.get(i).getCommitTime())
+                            .atZone(ZoneOffset.UTC)
+                            .toLocalDate()
+                            .toString()
+            );
+
             // Read in the old system
             String oldIRPath = BASE_IR_PATH + (i+1) + "_" + commitIdOld.substring(0, 4) +".json";
             MicroserviceSystem oldSystem = sanitizeMicroserviceSystem(
@@ -222,7 +233,11 @@ public class DetectionService {
     private void writeEmptyRow(int rowIndex) {
         Row row = sheet.createRow(rowIndex);
         for(int i = 0; i < columnLabels.length; i++) {
-            row.createCell(i).setCellValue(0);
+            if (i == 0 || i == 1) {
+                row.createCell(i).setCellValue("");
+            } else {
+                row.createCell(i).setCellValue(0);
+            }
         }
     }
 
@@ -339,7 +354,7 @@ public class DetectionService {
         // Update architectural rule counts in XSSFSheet
         Row row = sheet.getRow(rowIndex);
         for (int i = 0; i < arcrules_counts.length; i++) {
-            Cell cell = row.getCell(i + 1 + ANTIPATTERNS + METRICS); // first column is for commit ID + rest for anti-patterns+metrics
+            Cell cell = row.getCell(i + 2 + ANTIPATTERNS + METRICS); // first two columns are for commit ID and date + rest for anti-patterns+metrics
             cell.setCellValue(arcrules_counts[i]);
         }
     }
@@ -354,7 +369,7 @@ public class DetectionService {
         Row row = sheet.getRow(rowIndex);
 
         for (int i = 0; i < ANTIPATTERNS; i++) {
-            int offset = i + 1; // i + 1 because the first column is for commit ID
+            int offset = i + 2; // i + 2 because the first two columns are for commit ID and date
             Cell cell = row.getCell(offset);
 
             // Default value for No API Gateway is 1, meaning true
@@ -376,7 +391,7 @@ public class DetectionService {
         Row row = sheet.getRow(rowIndex);
 
         for (int i = 0; i < METRICS; i++) {
-            int offset = i + 1 + ANTIPATTERNS; // first column is for commit ID + rest for anti-patterns
+            int offset = i + 2 + ANTIPATTERNS; // first two columns are for commit ID and date + rest for anti-patterns
             Cell cell = row.getCell(offset);
             cell.setCellValue(metrics.getOrDefault(columnLabels[offset],0.0));
         }
