@@ -1,7 +1,16 @@
 package edu.university.ecs.lab.common.utils;
 
 import com.github.javaparser.StaticJavaParser;
+import com.github.javaparser.ast.NodeList;
 import com.github.javaparser.ast.expr.AnnotationExpr;
+import com.github.javaparser.ast.expr.ArrayInitializerExpr;
+import com.github.javaparser.ast.expr.Expression;
+import com.github.javaparser.ast.expr.MarkerAnnotationExpr;
+import com.github.javaparser.ast.expr.MemberValuePair;
+import com.github.javaparser.ast.expr.Name;
+import com.github.javaparser.ast.expr.NormalAnnotationExpr;
+import com.github.javaparser.ast.expr.SingleMemberAnnotationExpr;
+import com.github.javaparser.ast.expr.StringLiteralExpr;
 import edu.university.ecs.lab.common.config.Config;
 import edu.university.ecs.lab.common.models.enums.ClassRole;
 import edu.university.ecs.lab.common.models.enums.EndpointTemplate;
@@ -21,7 +30,6 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
-import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -332,28 +340,36 @@ final class GroovySourceParser {
         return Optional.of(new GroovyAnnotation(name, attributes, raw));
     }
 
-    private static Map<String, String> parseAttributeMap(String args) {
+    private static Map<String, GroovyAttribute> parseAttributeMap(String args) {
         if (args == null || args.isBlank()) {
             return Collections.emptyMap();
         }
 
         List<String> segments = splitTopLevel(args, ',');
-        Map<String, String> attributes = new LinkedHashMap<>();
+        Map<String, GroovyAttribute> attributes = new LinkedHashMap<>();
         for (String segment : segments) {
             if (segment.isBlank()) {
                 continue;
             }
             int equalsIndex = findTopLevelEquals(segment);
+            String key;
+            String value;
             if (equalsIndex >= 0) {
-                String key = segment.substring(0, equalsIndex).trim();
-                String value = segment.substring(equalsIndex + 1).trim();
+                key = segment.substring(0, equalsIndex).trim();
+                value = segment.substring(equalsIndex + 1).trim();
                 if (key.isEmpty()) {
                     key = "value";
                 }
-                attributes.put(key, sanitizeAttributeValue(value));
-            } else if (!attributes.containsKey("value")) {
-                attributes.put("value", sanitizeAttributeValue(segment));
+            } else {
+                key = "value";
+                value = segment.trim();
             }
+
+            if (value.isEmpty()) {
+                continue;
+            }
+
+            attributes.putIfAbsent(key, new GroovyAttribute(value, isCollectionValue(value)));
         }
         return attributes;
     }
@@ -601,7 +617,7 @@ final class GroovySourceParser {
     private record AnnotationParseResult(Optional<GroovyAnnotation> annotation, int nextIndex) {
     }
 
-    private record GroovyAnnotation(String qualifiedName, Map<String, String> attributes, String raw) {
+    private record GroovyAnnotation(String qualifiedName, Map<String, GroovyAttribute> attributes, String raw) {
 
         GroovyAnnotation {
             attributes = attributes == null ? Collections.emptyMap() : new LinkedHashMap<>(attributes);
@@ -613,55 +629,132 @@ final class GroovySourceParser {
         }
 
         Annotation toModel(String packageAndClassName) {
-            return new Annotation(simpleName(), packageAndClassName, new HashMap<>(attributes));
+            Map<String, String> attributeValues = attributes.entrySet().stream()
+                    .collect(Collectors.toMap(Map.Entry::getKey, entry -> entry.getValue().sanitized(),
+                            (existing, replacement) -> replacement, LinkedHashMap::new));
+            return new Annotation(simpleName(), packageAndClassName, new HashMap<>(attributeValues));
         }
 
         Optional<AnnotationExpr> toAnnotationExpr() {
             try {
-                StringBuilder builder = new StringBuilder("@").append(simpleName());
-                if (!attributes.isEmpty()) {
-                    builder.append('(');
-                    Iterator<Map.Entry<String, String>> iterator = attributes.entrySet().iterator();
-                    while (iterator.hasNext()) {
-                        Map.Entry<String, String> entry = iterator.next();
-                        String key = entry.getKey();
-                        String value = entry.getValue();
-                        builder.append(key).append(" = ").append(formatAnnotationValue(key, value));
-                        if (iterator.hasNext()) {
-                            builder.append(", ");
-                        }
-                    }
-                    builder.append(')');
+                if (attributes.isEmpty()) {
+                    return Optional.of(new MarkerAnnotationExpr(simpleName()));
                 }
-                return Optional.of(StaticJavaParser.parseAnnotation(builder.toString()));
+
+                if (attributes.size() == 1 && attributes.containsKey("value") && !attributes.get("value").isCollection()) {
+                    Expression expression = attributes.get("value").toExpression();
+                    return Optional.of(new SingleMemberAnnotationExpr(new Name(simpleName()), expression));
+                }
+
+                NodeList<MemberValuePair> pairs = new NodeList<>();
+                for (Map.Entry<String, GroovyAttribute> entry : attributes.entrySet()) {
+                    Expression expression = entry.getValue().toExpression();
+                    pairs.add(new MemberValuePair(entry.getKey(), expression));
+                }
+
+                return Optional.of(new NormalAnnotationExpr(new Name(simpleName()), pairs));
             } catch (Exception e) {
                 LoggerManager.debug(() -> "Unable to translate Groovy annotation " + raw + " into Java expression: " + e.getMessage());
                 return Optional.empty();
             }
         }
+    }
 
-        private String formatAnnotationValue(String key, String value) {
-            if (value == null || value.isEmpty()) {
-                return "\"\"";
-            }
-            if ("method".equals(key)) {
-                return value;
-            }
-            if (value.equalsIgnoreCase("true") || value.equalsIgnoreCase("false")) {
-                return value.toLowerCase(Locale.ROOT);
-            }
-            if (value.matches("-?\\d+(\\.\\d+)?")) {
-                return value;
-            }
-            if (value.matches("[A-Za-z_][A-Za-z0-9_]*(\\.[A-Za-z_][A-Za-z0-9_]*)*")) {
-                // Likely an enum or constant reference.
-                return value;
-            }
-            return "\"" + escape(value) + "\"";
+    private static final class GroovyAttribute {
+        private final String raw;
+        private final boolean collection;
+
+        GroovyAttribute(String raw, boolean collection) {
+            this.raw = raw;
+            this.collection = collection;
         }
 
-        private String escape(String value) {
-            return value.replace("\\", "\\\\").replace("\"", "\\\"");
+        boolean isCollection() {
+            return collection;
         }
+
+        String sanitized() {
+            if (collection) {
+                return elements().stream()
+                        .map(GroovySourceParser::sanitizeAttributeValue)
+                        .collect(Collectors.joining(", "));
+            }
+            return sanitizeAttributeValue(raw);
+        }
+
+        Expression toExpression() {
+            if (collection) {
+                NodeList<Expression> expressions = new NodeList<>();
+                for (String element : elements()) {
+                    expressions.add(parseSingleExpression(element));
+                }
+                return new ArrayInitializerExpr(expressions);
+            }
+            return parseSingleExpression(raw);
+        }
+
+        private List<String> elements() {
+            if (!collection) {
+                return List.of(raw);
+            }
+            String trimmed = unwrapDelimiters(raw.trim());
+            if (trimmed.isEmpty()) {
+                return List.of();
+            }
+            return splitTopLevel(trimmed, ',').stream()
+                    .map(String::trim)
+                    .filter(segment -> !segment.isEmpty())
+                    .collect(Collectors.toList());
+        }
+
+        private Expression parseSingleExpression(String value) {
+            String trimmed = value.trim();
+            if (trimmed.isEmpty()) {
+                try {
+                    return StaticJavaParser.parseExpression("\"\"");
+                } catch (Exception e) {
+                    return new StringLiteralExpr("");
+                }
+            }
+
+            if (trimmed.startsWith("'") && trimmed.endsWith("'")) {
+                trimmed = "\"" + escape(trimmed.substring(1, trimmed.length() - 1)) + "\"";
+            }
+
+            try {
+                return StaticJavaParser.parseExpression(trimmed);
+            } catch (Exception e) {
+                try {
+                    String fallback = "\"" + escape(sanitizeAttributeValue(value)) + "\"";
+                    return StaticJavaParser.parseExpression(fallback);
+                } catch (Exception ignored) {
+                    return new StringLiteralExpr(sanitizeAttributeValue(value));
+                }
+            }
+        }
+
+        private String unwrapDelimiters(String candidate) {
+            if (candidate.length() >= 2) {
+                if ((candidate.startsWith("[") && candidate.endsWith("]")) || (candidate.startsWith("{") && candidate.endsWith("}"))) {
+                    return candidate.substring(1, candidate.length() - 1).trim();
+                }
+            }
+            return candidate;
+        }
+    }
+
+    private static boolean isCollectionValue(String value) {
+        if (value == null) {
+            return false;
+        }
+        String trimmed = value.trim();
+        if (trimmed.length() >= 2) {
+            return (trimmed.startsWith("[") && trimmed.endsWith("]")) || (trimmed.startsWith("{") && trimmed.endsWith("}"));
+        }
+        return false;
+    }
+
+    private static String escape(String value) {
+        return value.replace("\\", "\\\\").replace("\"", "\\\"");
     }
 }
