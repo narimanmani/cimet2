@@ -30,6 +30,7 @@ import java.io.BufferedReader;
 import java.io.File;
 import java.io.InputStreamReader;
 import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
 
 /**
@@ -44,6 +45,8 @@ public class SourceToObjectUtils {
     private static String packageAndClassName;
     private static CombinedTypeSolver combinedTypeSolver;
     private static Config config;
+    private static final Map<String, Set<String>> ANNOTATION_META_NAMES = new ConcurrentHashMap<>();
+    private static final Map<String, Set<String>> ANNOTATION_META_EXPRESSIONS = new ConcurrentHashMap<>();
 
 
     private static void generateStaticValues(File sourceFile, Config config1) {
@@ -61,6 +64,7 @@ public class SourceToObjectUtils {
             packageName = cu.findAll(PackageDeclaration.class).get(0).getNameAsString();
             packageAndClassName = packageName + "." + sourceFile.getName().replace(".java", "");
         }
+        indexAnnotationDeclarations();
         path = FileUtils.localPathToGitPath(sourceFile.getPath(), config.getRepoName());
 
         TypeSolver reflectionTypeSolver = new ReflectionTypeSolver();
@@ -101,7 +105,7 @@ public class SourceToObjectUtils {
 
         // Calculate early to determine classrole based on annotation, filter for class based annotations only
         Set<AnnotationExpr> classAnnotations = filterClassAnnotations();
-        AnnotationExpr requestMapping = classAnnotations.stream().filter(ae -> ae.getNameAsString().equals("RequestMapping")).findFirst().orElse(null);
+        AnnotationExpr requestMapping = findRequestMappingAnnotation(classAnnotations);
 
         ClassRole classRole = parseClassRole(classAnnotations);
 
@@ -180,7 +184,8 @@ public class SourceToObjectUtils {
         for (AnnotationExpr ae : methodDeclaration.getAnnotations()) {
             Optional<String> resolvedMappingName = resolveEndpointMappingName(ae);
             if (resolvedMappingName.isPresent()) {
-                EndpointTemplate endpointTemplate = new EndpointTemplate(requestMapping, ae, resolvedMappingName.get());
+                AnnotationExpr effectiveAnnotation = resolveEffectiveMappingAnnotation(ae, resolvedMappingName.get());
+                EndpointTemplate endpointTemplate = new EndpointTemplate(requestMapping, effectiveAnnotation, resolvedMappingName.get());
 
                 // By Spring documentation, only the first valid @Mapping annotation is considered;
                 // And getAnnotations() return them in order, so we can return immediately
@@ -381,7 +386,7 @@ public class SourceToObjectUtils {
             LoggerManager.debug(() -> String.format("Unexpected error while resolving class role for annotation %s: %s", annotation, e.getMessage()));
         }
 
-        return ClassRole.UNKNOWN;
+        return resolveClassRoleFromCache(annotation.getNameAsString(), visited);
     }
 
     private static ClassRole mapAnnotationToRole(String annotationName) {
@@ -404,6 +409,29 @@ public class SourceToObjectUtils {
             default:
                 return ClassRole.UNKNOWN;
         }
+    }
+
+    private static ClassRole resolveClassRoleFromCache(String annotationName, Set<String> visited) {
+        for (String variant : annotationNameVariants(annotationName)) {
+            if (!visited.add(variant)) {
+                continue;
+            }
+
+            Set<String> metaNames = ANNOTATION_META_NAMES.getOrDefault(variant, Collections.emptySet());
+            for (String metaName : metaNames) {
+                ClassRole direct = mapAnnotationToRole(metaName);
+                if (!ClassRole.UNKNOWN.equals(direct)) {
+                    return direct;
+                }
+
+                ClassRole nested = resolveClassRoleFromCache(metaName, visited);
+                if (!ClassRole.UNKNOWN.equals(nested)) {
+                    return nested;
+                }
+            }
+        }
+
+        return ClassRole.UNKNOWN;
     }
 
     private static Optional<String> resolveEndpointMappingName(AnnotationExpr annotationExpr) {
@@ -446,6 +474,29 @@ public class SourceToObjectUtils {
             LoggerManager.debug(() -> String.format("Unexpected error while resolving endpoint annotation %s: %s", annotationExpr, e.getMessage()));
         }
 
+        return resolveEndpointMappingNameFromCache(annotationExpr.getNameAsString(), visited);
+    }
+
+    private static Optional<String> resolveEndpointMappingNameFromCache(String annotationName, Set<String> visited) {
+        for (String variant : annotationNameVariants(annotationName)) {
+            if (!visited.add(variant)) {
+                continue;
+            }
+
+            Set<String> metaNames = ANNOTATION_META_NAMES.getOrDefault(variant, Collections.emptySet());
+            for (String metaName : metaNames) {
+                String simple = simpleName(metaName);
+                if (EndpointTemplate.ENDPOINT_ANNOTATIONS.contains(simple)) {
+                    return Optional.of(simple);
+                }
+
+                Optional<String> nested = resolveEndpointMappingNameFromCache(metaName, visited);
+                if (nested.isPresent()) {
+                    return nested;
+                }
+            }
+        }
+
         return Optional.empty();
     }
 
@@ -455,6 +506,133 @@ public class SourceToObjectUtils {
         }
         int lastDotIndex = name.lastIndexOf('.');
         return lastDotIndex >= 0 ? name.substring(lastDotIndex + 1) : name;
+    }
+
+    private static Set<String> annotationNameVariants(String name) {
+        if (name == null || name.isEmpty()) {
+            return Collections.emptySet();
+        }
+
+        String simple = simpleName(name);
+        if (simple.equals(name)) {
+            return Set.of(name);
+        }
+
+        return Set.of(name, simple);
+    }
+
+    private static void indexAnnotationDeclarations() {
+        if (cu == null) {
+            return;
+        }
+
+        Optional<String> optionalPackage = cu.getPackageDeclaration().map(PackageDeclaration::getNameAsString);
+
+        for (AnnotationDeclaration declaration : cu.findAll(AnnotationDeclaration.class)) {
+            String simple = declaration.getNameAsString();
+            String qualified = optionalPackage.map(pkg -> pkg + "." + simple).orElse(simple);
+
+            for (AnnotationExpr metaAnnotation : declaration.getAnnotations()) {
+                registerAnnotationMetadata(simple, metaAnnotation);
+                registerAnnotationMetadata(qualified, metaAnnotation);
+            }
+        }
+    }
+
+    private static void registerAnnotationMetadata(String annotationName, AnnotationExpr metaAnnotation) {
+        if (annotationName == null || annotationName.isEmpty() || metaAnnotation == null) {
+            return;
+        }
+
+        ANNOTATION_META_NAMES
+                .computeIfAbsent(annotationName, key -> new LinkedHashSet<>())
+                .add(metaAnnotation.getNameAsString());
+
+        ANNOTATION_META_EXPRESSIONS
+                .computeIfAbsent(annotationName, key -> new LinkedHashSet<>())
+                .add(metaAnnotation.toString());
+    }
+
+    private static AnnotationExpr findRequestMappingAnnotation(Set<AnnotationExpr> classAnnotations) {
+        for (AnnotationExpr annotation : classAnnotations) {
+            Optional<String> mapping = resolveEndpointMappingName(annotation);
+            if (mapping.isPresent() && "RequestMapping".equals(mapping.get())) {
+                return resolveEffectiveMappingAnnotation(annotation, mapping.get());
+            }
+        }
+
+        for (AnnotationExpr annotation : classAnnotations) {
+            Optional<AnnotationExpr> meta = resolveMetaAnnotationExpression(annotation.getNameAsString(), "RequestMapping", new HashSet<>());
+            if (meta.isPresent()) {
+                return meta.get();
+            }
+        }
+
+        return null;
+    }
+
+    private static Optional<AnnotationExpr> resolveMetaAnnotationExpression(String annotationName, String targetSimpleName, Set<String> visited) {
+        for (String variant : annotationNameVariants(annotationName)) {
+            if (!visited.add(variant)) {
+                continue;
+            }
+
+            Set<String> expressions = ANNOTATION_META_EXPRESSIONS.getOrDefault(variant, Collections.emptySet());
+            for (String expression : expressions) {
+                AnnotationExpr parsed;
+                try {
+                    parsed = StaticJavaParser.parseAnnotation(expression);
+                } catch (Exception e) {
+                    LoggerManager.debug(() -> String.format("Unable to parse meta-annotation expression %s: %s", expression, e.getMessage()));
+                    continue;
+                }
+
+                String parsedName = parsed.getNameAsString();
+                if (targetSimpleName.equals(simpleName(parsedName))) {
+                    return Optional.of(parsed);
+                }
+
+                Optional<AnnotationExpr> nested = resolveMetaAnnotationExpression(parsedName, targetSimpleName, visited);
+                if (nested.isPresent()) {
+                    return nested;
+                }
+            }
+        }
+
+        return Optional.empty();
+    }
+
+    private static AnnotationExpr resolveEffectiveMappingAnnotation(AnnotationExpr annotationExpr, String mappingName) {
+        if (annotationExpr == null || mappingName == null) {
+            return annotationExpr;
+        }
+
+        if (hasExplicitPath(annotationExpr)) {
+            return annotationExpr;
+        }
+
+        Optional<AnnotationExpr> meta = resolveMetaAnnotationExpression(annotationExpr.getNameAsString(), mappingName, new HashSet<>());
+        return meta.orElse(annotationExpr);
+    }
+
+    private static boolean hasExplicitPath(AnnotationExpr annotationExpr) {
+        if (annotationExpr == null) {
+            return false;
+        }
+
+        if (annotationExpr.isSingleMemberAnnotationExpr()) {
+            return true;
+        }
+
+        if (annotationExpr.isNormalAnnotationExpr()) {
+            for (MemberValuePair pair : annotationExpr.asNormalAnnotationExpr().getPairs()) {
+                if (pair.getNameAsString().equals("value") || pair.getNameAsString().equals("path")) {
+                    return true;
+                }
+            }
+        }
+
+        return false;
     }
 
     /**
