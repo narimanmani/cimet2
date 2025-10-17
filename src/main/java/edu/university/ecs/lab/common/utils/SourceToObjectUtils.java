@@ -347,7 +347,7 @@ public class SourceToObjectUtils {
         }
 
         try {
-            ResolvedAnnotationDeclaration resolvedAnnotation = annotation.resolve().asAnnotation();
+            ResolvedAnnotationDeclaration resolvedAnnotation = annotation.resolve();
             String qualifiedName = resolvedAnnotation.getQualifiedName();
             if (qualifiedName != null) {
                 ClassRole qualifiedRole = mapAnnotationToRole(qualifiedName);
@@ -412,7 +412,7 @@ public class SourceToObjectUtils {
         }
 
         try {
-            ResolvedAnnotationDeclaration resolvedAnnotation = annotationExpr.resolve().asAnnotation();
+            ResolvedAnnotationDeclaration resolvedAnnotation = annotationExpr.resolve();
             String qualifiedName = resolvedAnnotation.getQualifiedName();
             if (qualifiedName != null) {
                 String qualifiedSimpleName = simpleName(qualifiedName);
