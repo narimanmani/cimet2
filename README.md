@@ -5,11 +5,11 @@ This project tracks microservice system evolution changes across repositories.
 
 ## Prerequisites
 
-* Maven 3.6+
-* Java 11+ (11 Recommended)  
+* Maven 3.9+
+* Java 17+ (17 Recommended)  
 
 ## To Compile:
-    ``mvn clean install -DskipTests``
+    ``./mvnw clean install -DskipTests``
 
 ## Running via Maven profiles
 
@@ -19,14 +19,14 @@ activating one of the provided Maven profiles (each overrides the `mainClass` pr
 command line. For example, to run the Excel output runner via Maven use:
 
 ```bash
-mvn clean install -DskipTests
-mvn -P run-history exec:java
+./mvnw clean install -DskipTests
+./mvnw -P run-history exec:java
 ```
 
 Alternatively, call the plugin directly with an explicit main class:
 
 ```bash
-mvn exec:java -Dexec.mainClass=edu.university.ecs.lab.detection.ExcelOutputRunner
+./mvnw exec:java -Dexec.mainClass=edu.university.ecs.lab.detection.ExcelOutputRunner
 ```
 
 ## Extracting an Intermediate Representation:
@@ -151,7 +151,7 @@ The workflow performs the following steps:
 
 1. Builds the Cimet project with Maven.
 2. Generates a temporary `config.json` targeting the Spinnaker repository (default branch `main`, configurable via workflow dispatch input).
-3. Executes the IR extraction runner (`mvn -P run-ir exec:java`).
+3. Executes the IR extraction runner (`./mvnw -P run-ir exec:java`).
 4. Uploads the generated `output/IR.json` as an artifact for download and further analysis.
 
 If you need to analyze a different branch or tag of Spinnaker, provide the desired ref in the workflow dispatch form before starting the run.
@@ -164,7 +164,7 @@ During execution the workflow:
 
 1. Builds the Cimet project and prepares a `config.json` targeting Spinnaker.
 2. Clones the requested branch (default `main`) of Spinnaker and determines the most recent commit and the latest commit at or before the two-month cut-off.
-3. Runs the delta extraction runner (`mvn -P run-delta exec:java`) between the two commits.
+3. Runs the delta extraction runner (`./mvnw -P run-delta exec:java`) between the two commits.
 4. Uploads the generated `output/Delta.json` artifact so you can inspect the detected changes.
 
 Supplying a different branch or tag in the workflow dispatch form adjusts both commits before running the delta extraction.
@@ -178,7 +178,7 @@ The workflow performs the following steps:
 1. Builds the CIMET project with Maven.
 2. Creates a shallow clone of Spinnaker that is restricted to the last ~60 days of history to ensure at least two recent commits are available for analysis.
 3. Generates a temporary `config.json` targeting the desired branch of Spinnaker.
-4. Executes the Excel output runner (`mvn exec:java -Dexec.mainClass=edu.university.ecs.lab.detection.ExcelOutputRunner -Dexec.args="./config.json"`).
+4. Executes the Excel output runner (`./mvnw exec:java -Dexec.mainClass=edu.university.ecs.lab.detection.ExcelOutputRunner -Dexec.args="./config.json"`).
 5. Uploads the resulting Excel workbook located at `output/spinnaker/output-Spinnaker.xlsx` as an artifact so you can inspect metrics and anti-pattern results.
 
 ### Spinnaker Excel detection workflow
@@ -189,7 +189,7 @@ This workflow:
 
 1. Builds the CIMET project with Maven.
 2. Creates a temporary `config.json` pointing to the selected Spinnaker ref.
-3. Executes the Excel output runner (`mvn exec:java -Dexec.mainClass=edu.university.ecs.lab.detection.ExcelOutputRunner -Dexec.args="./config.json"`).
+3. Executes the Excel output runner (`./mvnw exec:java -Dexec.mainClass=edu.university.ecs.lab.detection.ExcelOutputRunner -Dexec.args="./config.json"`).
 4. Uploads the resulting Excel workbook located at `output/spinnaker/output-Spinnaker.xlsx` as an artifact.
 
 ## Running the Excel output runner locally
@@ -197,8 +197,8 @@ This workflow:
 To generate the Excel workbook locally, compile the project and then execute the runner, optionally passing a custom configuration file path:
 
 ```bash
-mvn clean install -DskipTests
-mvn exec:java \
+./mvnw clean install -DskipTests
+./mvnw exec:java \
   -Dexec.mainClass=edu.university.ecs.lab.detection.ExcelOutputRunner \
   -Dexec.args="/path/to/config.json" \
   -DskipTests
