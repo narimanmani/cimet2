@@ -117,8 +117,9 @@ final class GroovySourceParser {
                     className = matcher.group(1);
                     packageAndClassName = packageName.isEmpty() ? className : packageName + "." + className;
 
+                    final String fqcnForClassAnnotations = packageAndClassName;
                     classAnnotations = pendingAnnotations.stream()
-                            .map(annotation -> annotation.toModel(packageAndClassName))
+                            .map(annotation -> annotation.toModel(fqcnForClassAnnotations))
                             .collect(Collectors.toCollection(LinkedHashSet::new));
                     classRole = determineClassRole(pendingAnnotations);
                     classRequestMapping = findMappingAnnotation(pendingAnnotations)
@@ -186,8 +187,9 @@ final class GroovySourceParser {
             List<GroovyAnnotation> methodAnnotations = new ArrayList<>(pendingAnnotations);
             pendingAnnotations.clear();
 
+            final String fqcnForMethodAnnotations = packageAndClassName;
             Set<Annotation> methodAnnotationModels = methodAnnotations.stream()
-                    .map(annotation -> annotation.toModel(packageAndClassName))
+                    .map(annotation -> annotation.toModel(fqcnForMethodAnnotations))
                     .collect(Collectors.toCollection(LinkedHashSet::new));
 
             String methodName = potentialName;
