@@ -27,7 +27,11 @@ import edu.university.ecs.lab.common.services.LoggerManager;
 import java.io.BufferedReader;
 import java.io.File;
 import java.io.InputStreamReader;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.util.*;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 /**
@@ -85,6 +89,11 @@ public class SourceToObjectUtils {
         if(Objects.isNull(sourceFile) || FileUtils.isConfigurationFile(sourceFile.getPath())) {
             LoggerManager.warn(() -> "JClass filtered  " + sourceFile.getPath() + " is config or null");
             return null;
+        }
+
+        // Route Groovy files to a lightweight Groovy handler
+        if (sourceFile.getName().endsWith(".groovy")) {
+            return handleGroovy(sourceFile, config, microserviceName);
         }
 
         generateStaticValues(sourceFile, config);
@@ -570,5 +579,46 @@ public class SourceToObjectUtils {
         }
 
         return jClass;
+    }
+
+    private static JClass handleGroovy(File sourceFile, Config config, String microserviceName) {
+        try {
+            String content = Files.readString(sourceFile.toPath(), StandardCharsets.UTF_8);
+
+            // Extract package name
+            String pkg = "";
+            Matcher pkgMatcher = Pattern.compile("^\\s*package\\s+([a-zA-Z0-9_\\.]+)", Pattern.MULTILINE).matcher(content);
+            if (pkgMatcher.find()) {
+                pkg = pkgMatcher.group(1);
+            }
+
+            String clsName = sourceFile.getName().replace(".groovy", "");
+            String gitPath = FileUtils.localPathToGitPath(sourceFile.getPath(), config.getRepoName());
+
+            // Determine class role by common Spring annotations in Groovy
+            ClassRole role = ClassRole.UNKNOWN;
+            if (content.contains("@FeignClient")) {
+                role = ClassRole.FEIGN_CLIENT;
+            } else if (content.contains("@RepositoryRestResource")) {
+                role = ClassRole.REP_REST_RSC;
+            } else if (content.contains("@RestController") || content.contains("@Controller")) {
+                role = ClassRole.CONTROLLER;
+            } else if (content.contains("@Service") || content.contains("@Component")) {
+                role = ClassRole.SERVICE;
+            }
+
+            if (role.equals(ClassRole.UNKNOWN)) {
+                LoggerManager.warn(() -> "JClass filtered  " + sourceFile.getPath() + " class role unknown (groovy)");
+                return null;
+            }
+
+            // Minimal JClass for Groovy: endpoints/methods parsing can be added later
+            JClass jClass = new JClass(clsName, gitPath, pkg, role);
+            jClass.updateMicroserviceName(microserviceName);
+            return jClass;
+        } catch (Exception e) {
+            LoggerManager.warn(() -> "Failed to parse groovy file " + sourceFile.getPath() + ": " + e.getMessage());
+            return null;
+        }
     }
 }
