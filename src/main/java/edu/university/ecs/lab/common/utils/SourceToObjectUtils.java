@@ -107,6 +107,13 @@ public class SourceToObjectUtils {
             return GroovySourceParser.parse(sourceFile, config, microserviceName);
         }
 
+        if (lowerName.endsWith(".kt") || lowerName.endsWith(".kts")) {
+            if (!microserviceName.isEmpty()) {
+                SourceToObjectUtils.microserviceName = microserviceName;
+            }
+            return KotlinSourceParser.parse(sourceFile, config, microserviceName);
+        }
+
         if (!lowerName.endsWith(".java")) {
             LoggerManager.debug(() -> "Skipping non-Java source file " + sourceFile.getPath());
             return null;
