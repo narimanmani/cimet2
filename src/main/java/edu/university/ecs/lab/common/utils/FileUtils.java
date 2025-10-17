@@ -13,7 +13,7 @@ import java.util.stream.Collectors;
  */
 public class FileUtils {
     private static final Set<String> CODE_EXTENSIONS = Set.of(".java", ".kt", ".kts", ".groovy");
-    private static final Set<String> CONFIG_FILENAMES = Set.of("pom.xml", "build.gradle", "build.gradle.kts", ".yml");
+    private static final Set<String> CONFIG_FILENAMES = Set.of("pom.xml", "build.gradle", "build.gradle.kts", ".yml", ".yaml");
     public static final String SYS_SEPARATOR = System.getProperty("file.separator");
     public static final String SPECIAL_SEPARATOR = SYS_SEPARATOR.replace("\\", "\\\\");
     private static final String DEFAULT_OUTPUT_PATH = "output";

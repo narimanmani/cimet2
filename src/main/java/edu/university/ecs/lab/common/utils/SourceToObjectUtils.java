@@ -93,7 +93,21 @@ public class SourceToObjectUtils {
             return null;
         }
 
-        if (!FileUtils.isCodeFile(sourceFile.getPath()) || !sourceFile.getName().endsWith(".java")) {
+        if (!FileUtils.isCodeFile(sourceFile.getPath())) {
+            LoggerManager.debug(() -> "Skipping unsupported source file " + sourceFile.getPath());
+            return null;
+        }
+
+        String lowerName = sourceFile.getName().toLowerCase(Locale.ROOT);
+
+        if (lowerName.endsWith(".groovy")) {
+            if (!microserviceName.isEmpty()) {
+                SourceToObjectUtils.microserviceName = microserviceName;
+            }
+            return GroovySourceParser.parse(sourceFile, config, microserviceName);
+        }
+
+        if (!lowerName.endsWith(".java")) {
             LoggerManager.debug(() -> "Skipping non-Java source file " + sourceFile.getPath());
             return null;
         }
@@ -389,7 +403,7 @@ public class SourceToObjectUtils {
         return resolveClassRoleFromCache(annotation.getNameAsString(), visited);
     }
 
-    private static ClassRole mapAnnotationToRole(String annotationName) {
+    static ClassRole mapAnnotationToRole(String annotationName) {
         String simpleName = simpleName(annotationName);
         switch (simpleName) {
             case "RestController":
