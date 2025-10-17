@@ -38,6 +38,7 @@ public class ServiceDiscovery {
 
         Map<Path, ServiceContext> contexts = new LinkedHashMap<>();
         traverse(root, contexts);
+        LoggerManager.info(() -> String.format("Service discovery located %d module(s) under %s", contexts.size(), repoRoot));
         return new ArrayList<>(contexts.values());
     }
 
@@ -129,27 +130,26 @@ public class ServiceDiscovery {
             List<String> lines = Files.readAllLines(settingsFile.toPath());
             for (String line : lines) {
                 String trimmed = line.trim();
-                if (trimmed.startsWith("include")) {
-                    String moduleList = trimmed.substring("include".length()).trim();
-                    moduleList = moduleList.replace("(", "").replace(")", "");
-                    String[] parts = moduleList.split(",");
-                    for (String part : parts) {
-                        String cleaned = part.trim();
-                        if (cleaned.startsWith("'")) {
-                            cleaned = cleaned.substring(1);
-                        }
-                        if (cleaned.endsWith("'")) {
-                            cleaned = cleaned.substring(0, cleaned.length() - 1);
-                        }
-                        if (cleaned.startsWith("\"")) {
-                            cleaned = cleaned.substring(1);
-                        }
-                        if (cleaned.endsWith("\"")) {
-                            cleaned = cleaned.substring(0, cleaned.length() - 1);
-                        }
-                        if (!cleaned.isEmpty()) {
-                            modules.add(cleaned.replace(":", File.separator));
-                        }
+                if (!trimmed.startsWith("include")) {
+                    continue;
+                }
+
+                String moduleList = trimmed.substring("include".length()).trim();
+                moduleList = moduleList.replace("(", "").replace(")", "");
+                String[] parts = moduleList.split(",");
+                for (String part : parts) {
+                    String cleaned = stripQuotes(part.trim());
+                    if (cleaned.isEmpty()) {
+                        continue;
+                    }
+
+                    String normalized = Arrays.stream(cleaned.split(":"))
+                            .map(String::trim)
+                            .filter(segment -> !segment.isEmpty())
+                            .collect(Collectors.joining(File.separator));
+
+                    if (!normalized.isEmpty()) {
+                        modules.add(normalized);
                     }
                 }
             }
@@ -157,6 +157,26 @@ public class ServiceDiscovery {
             LoggerManager.debug(() -> "Unable to parse settings file " + settingsFile + ": " + e.getMessage());
         }
         return modules;
+    }
+
+    private String stripQuotes(String value) {
+        if (value.isEmpty()) {
+            return value;
+        }
+        String result = value;
+        if (result.startsWith("\"")) {
+            result = result.substring(1);
+        }
+        if (result.endsWith("\"")) {
+            result = result.substring(0, result.length() - 1);
+        }
+        if (result.startsWith("'")) {
+            result = result.substring(1);
+        }
+        if (result.endsWith("'")) {
+            result = result.substring(0, result.length() - 1);
+        }
+        return result;
     }
 
     private ServiceContext buildContext(File moduleDirectory) {
