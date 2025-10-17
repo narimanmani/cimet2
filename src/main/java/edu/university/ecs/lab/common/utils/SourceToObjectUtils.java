@@ -89,6 +89,11 @@ public class SourceToObjectUtils {
             return null;
         }
 
+        if (!FileUtils.isCodeFile(sourceFile.getPath()) || !sourceFile.getName().endsWith(".java")) {
+            LoggerManager.debug(() -> "Skipping non-Java source file " + sourceFile.getPath());
+            return null;
+        }
+
         generateStaticValues(sourceFile, config);
         if (!microserviceName.isEmpty()) {
             SourceToObjectUtils.microserviceName = microserviceName;
@@ -538,6 +543,8 @@ public class SourceToObjectUtils {
         } else if(file.getName().equals("pom.xml")) {
             return NonJsonReadWriteUtils.readFromPom(file.getPath(), config);
         } else if (file.getName().equals("build.gradle")){
+            return NonJsonReadWriteUtils.readFromGradle(file.getPath(), config);
+        } else if (file.getName().equals("build.gradle.kts")) {
             return NonJsonReadWriteUtils.readFromGradle(file.getPath(), config);
         } else {
             return null;

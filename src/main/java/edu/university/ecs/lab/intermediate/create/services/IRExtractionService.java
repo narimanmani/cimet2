@@ -3,6 +3,7 @@ package edu.university.ecs.lab.intermediate.create.services;
 import edu.university.ecs.lab.common.config.Config;
 import edu.university.ecs.lab.common.config.ConfigUtil;
 import edu.university.ecs.lab.common.error.Error;
+import edu.university.ecs.lab.common.models.enums.WebFramework;
 import edu.university.ecs.lab.common.models.ir.ConfigFile;
 import edu.university.ecs.lab.common.models.ir.JClass;
 import edu.university.ecs.lab.common.models.ir.Microservice;
@@ -12,6 +13,8 @@ import edu.university.ecs.lab.common.services.LoggerManager;
 import edu.university.ecs.lab.common.utils.FileUtils;
 import edu.university.ecs.lab.common.utils.JsonReadWriteUtils;
 import edu.university.ecs.lab.common.utils.SourceToObjectUtils;
+import edu.university.ecs.lab.intermediate.create.discovery.ServiceDiscovery;
+import edu.university.ecs.lab.intermediate.create.discovery.ServiceDiscovery.ServiceContext;
 import java.io.File;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -45,6 +48,8 @@ public class IRExtractionService {
      */
     private final String commitID;
 
+    private final ServiceDiscovery serviceDiscovery;
+
     /**
      * This constructor initializes a new IRExtractionService and instantiates a
      * GitService object for repository manipulation
@@ -64,6 +69,7 @@ public class IRExtractionService {
         }
 
         config = ConfigUtil.readConfig(configPath);
+        serviceDiscovery = new ServiceDiscovery();
     }
 
     /**
@@ -96,25 +102,22 @@ public class IRExtractionService {
         gitService.cloneRemote();
 
         // Start scanning from the root directory
-        List<String> rootDirectories = findRootDirectories(FileUtils.getRepositoryPath(config.getRepoName()));
-        List<String> rootDirectoriesCopy = List.copyOf(rootDirectories);
+        List<ServiceContext> serviceContexts = serviceDiscovery.discoverServices(FileUtils.getRepositoryPath(config.getRepoName()));
 
-        // Filter more/less specific
-        for(String s1 : rootDirectoriesCopy) {
-            for(String s2 : rootDirectoriesCopy) {
-                if(s1.equals(s2)) {
-                    continue;
-                } else if(s1.matches(s2.replace(FileUtils.SYS_SEPARATOR, FileUtils.SPECIAL_SEPARATOR) + FileUtils.SPECIAL_SEPARATOR + ".*")) {
-                    rootDirectories.remove(s2);
-                } else if(s2.matches(s1.replace(FileUtils.SYS_SEPARATOR, FileUtils.SPECIAL_SEPARATOR) + FileUtils.SPECIAL_SEPARATOR + ".*")) {
-                    rootDirectories.remove(s1);
+        if (serviceContexts.isEmpty()) {
+            LoggerManager.warn(() -> "Service discovery found no modules; falling back to legacy root detection.");
+            List<String> rootDirectories = findRootDirectories(FileUtils.getRepositoryPath(config.getRepoName()));
+            for (String rootDirectory : rootDirectories) {
+                Microservice microservice = recursivelyScanFiles(rootDirectory);
+                if (microservice != null) {
+                    microservices.add(microservice);
                 }
             }
+            return microservices;
         }
 
-        // Scan each root directory for microservices
-        for (String rootDirectory : rootDirectories) {
-            Microservice microservice = recursivelyScanFiles(rootDirectory);
+        for (ServiceContext context : serviceContexts) {
+            Microservice microservice = scanServiceContext(context);
             if (microservice != null) {
                 microservices.add(microservice);
             }
@@ -207,13 +210,16 @@ public class IRExtractionService {
             Error.reportAndExit(Error.INVALID_REPO_PATHS, Optional.empty());
         }
 
+        ServiceContext context = new ServiceContext(
+                localDir.getName(),
+                localDir.toPath().toAbsolutePath(),
+                Set.of(localDir.toPath().toAbsolutePath()),
+                Set.of(),
+                EnumSet.noneOf(WebFramework.class));
 
-        Microservice model = new Microservice(FileUtils.getMicroserviceNameFromPath(rootMicroservicePath),
-                FileUtils.localPathToGitPath(rootMicroservicePath, config.getRepoName()));
-        scanDirectory(localDir, model);
-
+        Microservice microservice = scanServiceContext(context);
         LoggerManager.info(() -> "Done scanning directory  " + rootMicroservicePath);
-        return model;
+        return microservice;
     }
 
     /**
@@ -223,13 +229,17 @@ public class IRExtractionService {
      */
     public void scanDirectory(
             File directory,
-            Microservice microservice) {
+            Microservice microservice,
+            ServiceContext context) {
         File[] files = directory.listFiles();
 
         if (files != null) {
             for (File file : files) {
                 if (file.isDirectory()) {
-                    scanDirectory(file, microservice);
+                    if (shouldSkipDirectory(file)) {
+                        continue;
+                    }
+                    scanDirectory(file, microservice, context);
                 } else if (FileUtils.isValidFile(file.getPath())) {
 
                     if(FileUtils.isConfigurationFile(file.getPath())) {
@@ -252,6 +262,91 @@ public class IRExtractionService {
                 }
             }
         }
+    }
+
+    private Microservice scanServiceContext(ServiceContext context) {
+        File moduleDir = context.getModulePath().toFile();
+        if (!moduleDir.exists() || !moduleDir.isDirectory()) {
+            LoggerManager.warn(() -> "Skipping missing module directory " + context.getModulePath());
+            return null;
+        }
+
+        String gitPath = resolveGitPath(context.getModulePath());
+        Microservice model = new Microservice(context.getName(), gitPath);
+
+        addModuleConfigurationFiles(moduleDir, model);
+
+        for (java.nio.file.Path resourceRoot : context.getResourceRoots()) {
+            scanDirectory(resourceRoot.toFile(), model, context);
+        }
+
+        if (context.getSourceRoots().isEmpty()) {
+            scanDirectory(moduleDir, model, context);
+        } else {
+            for (java.nio.file.Path sourceRoot : context.getSourceRoots()) {
+                scanDirectory(sourceRoot.toFile(), model, context);
+            }
+        }
+
+        if (context.getFrameworks().isEmpty()) {
+            LoggerManager.debug(() -> String.format("Module %s did not reveal any known web framework", context.getModulePath()));
+        } else {
+            LoggerManager.info(() -> String.format("Module %s uses frameworks %s", context.getModulePath(), context.getFrameworks()));
+        }
+
+        return model;
+    }
+
+    private void addModuleConfigurationFiles(File moduleDir, Microservice microservice) {
+        File[] files = moduleDir.listFiles();
+        if (files == null) {
+            return;
+        }
+
+        for (File file : files) {
+            if (!file.isFile()) {
+                continue;
+            }
+            if (!FileUtils.isConfigurationFile(file.getPath())) {
+                continue;
+            }
+            ConfigFile configFile = SourceToObjectUtils.parseConfigurationFile(file, config);
+            if (configFile != null) {
+                microservice.getFiles().add(configFile);
+            }
+        }
+    }
+
+    private boolean shouldSkipDirectory(File directory) {
+        String name = directory.getName();
+        if (name.equals("test") || name.equals("tests")) {
+            return true;
+        }
+        if (name.equals("build") || name.equals("target") || name.equals("out") || name.equals("bin")) {
+            return true;
+        }
+        if (name.equals(".git") || name.equals(".idea") || name.equals("node_modules")) {
+            return true;
+        }
+        return false;
+    }
+
+    private String resolveGitPath(java.nio.file.Path modulePath) {
+        java.nio.file.Path repositoryRoot = new File(FileUtils.getRepositoryPath(config.getRepoName())).toPath().toAbsolutePath().normalize();
+        java.nio.file.Path normalizedModule = modulePath.toAbsolutePath().normalize();
+        String relative;
+        try {
+            relative = repositoryRoot.relativize(normalizedModule).toString();
+        } catch (IllegalArgumentException e) {
+            LoggerManager.debug(() -> "Unable to relativize path " + modulePath + " against repo root " + repositoryRoot + ": " + e.getMessage());
+            return FileUtils.localPathToGitPath(modulePath.toString(), config.getRepoName());
+        }
+
+        if (relative.isEmpty()) {
+            return FileUtils.GIT_SEPARATOR;
+        }
+
+        return FileUtils.GIT_SEPARATOR + relative.replace(FileUtils.SYS_SEPARATOR, FileUtils.GIT_SEPARATOR);
     }
 
 
