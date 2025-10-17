@@ -1,21 +1,24 @@
 package edu.university.ecs.lab.common.models.enums;
 
-import com.github.javaparser.ast.body.MethodDeclaration;
 import com.github.javaparser.ast.expr.*;
 import edu.university.ecs.lab.intermediate.utils.StringParserUtils;
 import lombok.Getter;
 
-import java.util.Arrays;
-import java.util.HashSet;
-import java.util.List;
-import java.util.Set;
+import java.util.*;
 
 /**
  * Factory class for generating an endpoint template from annotations
  */
 @Getter
 public class EndpointTemplate {
-    public static final List<String> ENDPOINT_ANNOTATIONS = Arrays.asList("RequestMapping", "GetMapping", "PutMapping", "PostMapping", "DeleteMapping", "PatchMapping");
+    public static final Set<String> ENDPOINT_ANNOTATIONS = Collections.unmodifiableSet(new HashSet<>(Arrays.asList(
+            "RequestMapping",
+            "GetMapping",
+            "PutMapping",
+            "PostMapping",
+            "DeleteMapping",
+            "PatchMapping"
+    )));
     private final HttpMethod httpMethod;
     private final String name;
     private final String url;
@@ -23,6 +26,10 @@ public class EndpointTemplate {
 
 
     public EndpointTemplate(AnnotationExpr requestMapping, AnnotationExpr endpointMapping) {
+        this(requestMapping, endpointMapping, endpointMapping.getNameAsString());
+    }
+
+    public EndpointTemplate(AnnotationExpr requestMapping, AnnotationExpr endpointMapping, String resolvedMappingName) {
         HttpMethod finalHttpMethod = HttpMethod.ALL;
 
         String preUrl = "";
@@ -59,7 +66,7 @@ public class EndpointTemplate {
         }
 
         if(finalHttpMethod == HttpMethod.ALL) {
-            finalHttpMethod = httpFromMapping(endpointMapping.getNameAsString());
+            finalHttpMethod = httpFromMapping(resolvedMappingName);
         }
 
         String finalURL = "";
@@ -87,7 +94,7 @@ public class EndpointTemplate {
         // Get query Parameters
 
         this.httpMethod = finalHttpMethod;
-        this.name = endpointMapping.getNameAsString();
+        this.name = resolvedMappingName;
         this.url = simplifyEndpointURL(finalURL);
     }
 

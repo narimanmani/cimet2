@@ -8,6 +8,7 @@ import com.github.javaparser.ast.body.*;
 import com.github.javaparser.ast.body.Parameter;
 import com.github.javaparser.ast.expr.*;
 import com.github.javaparser.ast.nodeTypes.NodeWithSimpleName;
+import com.github.javaparser.resolution.declarations.ResolvedAnnotationDeclaration;
 import com.github.javaparser.resolution.UnsolvedSymbolException;
 import com.github.javaparser.symbolsolver.JavaSymbolSolver;
 import com.github.javaparser.symbolsolver.javaparsermodel.JavaParserFacade;
@@ -172,9 +173,9 @@ public class SourceToObjectUtils {
      */
     public static Method convertValidEndpoints(MethodDeclaration methodDeclaration, Method method, AnnotationExpr requestMapping) {
         for (AnnotationExpr ae : methodDeclaration.getAnnotations()) {
-            String ae_name = ae.getNameAsString();
-            if (EndpointTemplate.ENDPOINT_ANNOTATIONS.contains(ae_name)) {
-                EndpointTemplate endpointTemplate = new EndpointTemplate(requestMapping, ae);
+            Optional<String> resolvedMappingName = resolveEndpointMappingName(ae);
+            if (resolvedMappingName.isPresent()) {
+                EndpointTemplate endpointTemplate = new EndpointTemplate(requestMapping, ae, resolvedMappingName.get());
 
                 // By Spring documentation, only the first valid @Mapping annotation is considered;
                 // And getAnnotations() return them in order, so we can return immediately
@@ -331,24 +332,124 @@ public class SourceToObjectUtils {
      */
     private static ClassRole parseClassRole(Set<AnnotationExpr> annotations) {
         for (AnnotationExpr annotation : annotations) {
-            switch (annotation.getNameAsString()) {
-                case "RestController":
-                case "Controller":
-                    return ClassRole.CONTROLLER;
-                case "Service":
-                    return ClassRole.SERVICE;
-                case "Repository":
-                    return ClassRole.REPOSITORY;
-                case "RepositoryRestResource":
-                    return ClassRole.REP_REST_RSC;
-                case "Entity":
-                case "Embeddable":
-                    return ClassRole.ENTITY;
-                case "FeignClient":
-                    return ClassRole.FEIGN_CLIENT;
+            ClassRole classRole = resolveClassRole(annotation, new HashSet<>());
+            if (!ClassRole.UNKNOWN.equals(classRole)) {
+                return classRole;
             }
         }
         return ClassRole.UNKNOWN;
+    }
+
+    private static ClassRole resolveClassRole(AnnotationExpr annotation, Set<String> visited) {
+        ClassRole directRole = mapAnnotationToRole(annotation.getNameAsString());
+        if (!ClassRole.UNKNOWN.equals(directRole)) {
+            return directRole;
+        }
+
+        try {
+            ResolvedAnnotationDeclaration resolvedAnnotation = annotation.resolve().asAnnotation();
+            String qualifiedName = resolvedAnnotation.getQualifiedName();
+            if (qualifiedName != null) {
+                ClassRole qualifiedRole = mapAnnotationToRole(qualifiedName);
+                if (!ClassRole.UNKNOWN.equals(qualifiedRole)) {
+                    return qualifiedRole;
+                }
+            }
+
+            String visitKey = qualifiedName != null ? qualifiedName : annotation.getNameAsString();
+            if (!visitKey.isEmpty() && !visited.add(visitKey)) {
+                return ClassRole.UNKNOWN;
+            }
+
+            Optional<? extends AnnotationDeclaration> declaration = resolvedAnnotation.toAst();
+            if (declaration.isPresent()) {
+                for (AnnotationExpr metaAnnotation : declaration.get().getAnnotations()) {
+                    ClassRole metaRole = resolveClassRole(metaAnnotation, visited);
+                    if (!ClassRole.UNKNOWN.equals(metaRole)) {
+                        return metaRole;
+                    }
+                }
+            }
+        } catch (UnsolvedSymbolException | UnsupportedOperationException e) {
+            LoggerManager.debug(() -> String.format("Unable to resolve class role for annotation %s: %s", annotation, e.getMessage()));
+        } catch (RuntimeException e) {
+            LoggerManager.debug(() -> String.format("Unexpected error while resolving class role for annotation %s: %s", annotation, e.getMessage()));
+        }
+
+        return ClassRole.UNKNOWN;
+    }
+
+    private static ClassRole mapAnnotationToRole(String annotationName) {
+        String simpleName = simpleName(annotationName);
+        switch (simpleName) {
+            case "RestController":
+            case "Controller":
+                return ClassRole.CONTROLLER;
+            case "Service":
+                return ClassRole.SERVICE;
+            case "Repository":
+                return ClassRole.REPOSITORY;
+            case "RepositoryRestResource":
+                return ClassRole.REP_REST_RSC;
+            case "Entity":
+            case "Embeddable":
+                return ClassRole.ENTITY;
+            case "FeignClient":
+                return ClassRole.FEIGN_CLIENT;
+            default:
+                return ClassRole.UNKNOWN;
+        }
+    }
+
+    private static Optional<String> resolveEndpointMappingName(AnnotationExpr annotationExpr) {
+        return resolveEndpointMappingName(annotationExpr, new HashSet<>());
+    }
+
+    private static Optional<String> resolveEndpointMappingName(AnnotationExpr annotationExpr, Set<String> visited) {
+        String simpleName = simpleName(annotationExpr.getNameAsString());
+        if (EndpointTemplate.ENDPOINT_ANNOTATIONS.contains(simpleName)) {
+            return Optional.of(simpleName);
+        }
+
+        try {
+            ResolvedAnnotationDeclaration resolvedAnnotation = annotationExpr.resolve().asAnnotation();
+            String qualifiedName = resolvedAnnotation.getQualifiedName();
+            if (qualifiedName != null) {
+                String qualifiedSimpleName = simpleName(qualifiedName);
+                if (EndpointTemplate.ENDPOINT_ANNOTATIONS.contains(qualifiedSimpleName)) {
+                    return Optional.of(qualifiedSimpleName);
+                }
+            }
+
+            String visitKey = qualifiedName != null ? qualifiedName : annotationExpr.getNameAsString();
+            if (!visitKey.isEmpty() && !visited.add(visitKey)) {
+                return Optional.empty();
+            }
+
+            Optional<? extends AnnotationDeclaration> declaration = resolvedAnnotation.toAst();
+            if (declaration.isPresent()) {
+                for (AnnotationExpr metaAnnotation : declaration.get().getAnnotations()) {
+                    Optional<String> resolvedMapping = resolveEndpointMappingName(metaAnnotation, visited);
+                    if (resolvedMapping.isPresent()) {
+                        return resolvedMapping;
+                    }
+                }
+            }
+        } catch (UnsolvedSymbolException | UnsupportedOperationException e) {
+            LoggerManager.debug(() -> String.format("Unable to resolve endpoint annotation %s: %s", annotationExpr, e.getMessage()));
+        } catch (RuntimeException e) {
+            LoggerManager.debug(() -> String.format("Unexpected error while resolving endpoint annotation %s: %s", annotationExpr, e.getMessage()));
+        }
+
+        return Optional.empty();
+    }
+
+    private static String simpleName(String name) {
+        if (name == null) {
+            return "";
+        }
+        int lastDotIndex = name.lastIndexOf('.');
+        return lastDotIndex >= 0 ? name.substring(lastDotIndex + 1) : name;
     }
 
     /**
