@@ -16,11 +16,13 @@ import edu.university.ecs.lab.intermediate.utils.StringParserUtils;
 import lombok.Getter;
 
 import java.util.Arrays;
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
-import java.util.Optional;
 import java.util.Set;
+import java.util.LinkedHashMap;
+import java.util.Map;
 import java.util.stream.Collectors;
 
 /**
@@ -47,120 +49,147 @@ public class EndpointTemplate {
     }
 
     public EndpointTemplate(AnnotationExpr requestMapping, AnnotationExpr endpointMapping, String resolvedMappingName) {
-        HttpMethod finalHttpMethod = HttpMethod.ALL;
-
-        String preUrl = extractMappingPath(requestMapping).orElse("");
-
-        String url = "";
-        if (endpointMapping instanceof NormalAnnotationExpr nae) {
-            for (MemberValuePair pair : nae.getPairs()) {
-                String pairName = pair.getNameAsString();
-                if (pairName.equals("method")) {
-                    List<String> methods = extractMethodNames(pair.getValue());
-                    if (!methods.isEmpty()) {
-                        finalHttpMethod = mergeHttpMethods(methods);
-                    }
-                } else if (pairName.equals("path") || pairName.equals("value")) {
-                    url = extractStringValue(pair.getValue()).orElse(url);
-                }
-            }
-        } else if (endpointMapping instanceof SingleMemberAnnotationExpr smae) {
-            url = extractStringValue(smae.getMemberValue()).orElse("");
-        } else if (endpointMapping instanceof MarkerAnnotationExpr) {
-            if (preUrl.isEmpty()) {
-                url = "/";
-            }
-        }
-
-        if (finalHttpMethod == HttpMethod.ALL) {
-            finalHttpMethod = httpFromMapping(resolvedMappingName);
-        }
-
-        preUrl = normalizePath(preUrl);
-        url = normalizePath(url);
-
-        String finalURL;
-        if (preUrl.isEmpty() && url.isEmpty()) {
-            finalURL = "/";
-        } else {
-            finalURL = preUrl + url;
-        }
-
-        finalURL = finalURL.replaceAll("//", "/");
-        finalURL = finalURL.endsWith("/") && !finalURL.equals("/") ? finalURL.substring(0, finalURL.length() - 1) : finalURL;
-
-        this.httpMethod = finalHttpMethod;
-        this.name = resolvedMappingName;
-        this.url = simplifyEndpointURL(finalURL);
+        List<EndpointTemplate> expanded = from(requestMapping, endpointMapping, resolvedMappingName);
+        EndpointTemplate fallback = expanded.isEmpty()
+                ? new EndpointTemplate(HttpMethod.ALL, resolvedMappingName, "/")
+                : expanded.get(0);
+        this.httpMethod = fallback.httpMethod;
+        this.name = fallback.name;
+        this.url = fallback.url;
     }
 
+    private EndpointTemplate(HttpMethod httpMethod, String name, String url) {
+        this.httpMethod = httpMethod;
+        this.name = name;
+        this.url = url;
+    }
 
-    /**
-     * Method to get http method from mapping
-     * 
-     * @param mapping mapping string for a given method
-     * @return HttpMethod object of same method type
-     */
-    private static Optional<String> extractMappingPath(AnnotationExpr annotationExpr) {
+    public static List<EndpointTemplate> from(AnnotationExpr requestMapping, AnnotationExpr endpointMapping, String resolvedMappingName) {
+        List<String> classPaths = extractMappingPaths(requestMapping);
+        if (classPaths.isEmpty()) {
+            classPaths = List.of("");
+        }
+
+        List<String> methodPaths = extractMappingPaths(endpointMapping);
+        if (methodPaths.isEmpty()) {
+            methodPaths = List.of("");
+        }
+
+        List<HttpMethod> httpMethods = extractHttpMethods(endpointMapping, resolvedMappingName);
+        if (httpMethods.isEmpty()) {
+            httpMethods = List.of(HttpMethod.ALL);
+        }
+
+        Map<String, EndpointTemplate> templates = new LinkedHashMap<>();
+        for (String classPath : classPaths) {
+            String normalizedBase = normalizePath(classPath);
+            for (String methodPath : methodPaths) {
+                String normalizedMethod = normalizePath(methodPath);
+                String combined;
+                if (normalizedBase.isEmpty() && normalizedMethod.isEmpty()) {
+                    combined = "/";
+                } else {
+                    combined = normalizedBase + normalizedMethod;
+                }
+                combined = combined.replaceAll("/+", "/");
+                if (combined.endsWith("/") && !combined.equals("/")) {
+                    combined = combined.substring(0, combined.length() - 1);
+                }
+                String simplified = simplifyEndpointURL(combined);
+                for (HttpMethod method : httpMethods) {
+                    String key = method.name() + " " + simplified;
+                    templates.putIfAbsent(key, new EndpointTemplate(method, resolvedMappingName, simplified));
+                }
+            }
+        }
+
+        return new ArrayList<>(templates.values());
+    }
+
+    private static List<String> extractMappingPaths(AnnotationExpr annotationExpr) {
         if (annotationExpr == null) {
-            return Optional.empty();
+            return List.of();
         }
 
         if (annotationExpr instanceof NormalAnnotationExpr nae) {
+            List<String> values = new ArrayList<>();
             for (MemberValuePair pair : nae.getPairs()) {
                 String pairName = pair.getNameAsString();
                 if (pairName.equals("path") || pairName.equals("value")) {
-                    return extractStringValue(pair.getValue());
+                    values.addAll(extractStringValues(pair.getValue()));
                 }
             }
-            return Optional.empty();
+            return values;
         }
 
         if (annotationExpr instanceof SingleMemberAnnotationExpr smae) {
-            return extractStringValue(smae.getMemberValue());
+            return extractStringValues(smae.getMemberValue());
         }
 
         if (annotationExpr instanceof MarkerAnnotationExpr) {
-            return Optional.of("");
+            return List.of("");
         }
 
-        return Optional.empty();
+        return List.of();
     }
 
-    private static Optional<String> extractStringValue(Expression expression) {
+    private static List<HttpMethod> extractHttpMethods(AnnotationExpr annotationExpr, String resolvedMappingName) {
+        List<String> methodNames = new ArrayList<>();
+        if (annotationExpr instanceof NormalAnnotationExpr nae) {
+            for (MemberValuePair pair : nae.getPairs()) {
+                if (pair.getNameAsString().equals("method")) {
+                    methodNames.addAll(extractMethodNames(pair.getValue()));
+                }
+            }
+        }
+
+        List<HttpMethod> methods = methodNames.stream()
+                .map(EndpointTemplate::httpFromMapping)
+                .filter(httpMethod -> httpMethod != null)
+                .collect(Collectors.toList());
+
+        if (!methods.isEmpty()) {
+            return methods;
+        }
+
+        HttpMethod derived = httpFromMapping(resolvedMappingName);
+        return derived == null ? List.of() : List.of(derived);
+    }
+
+    private static List<String> extractStringValues(Expression expression) {
         if (expression == null) {
-            return Optional.empty();
+            return List.of();
+        }
+
+        if (expression.isArrayInitializerExpr()) {
+            ArrayInitializerExpr array = expression.asArrayInitializerExpr();
+            return array.getValues().stream()
+                    .flatMap(value -> extractStringValues(value).stream())
+                    .collect(Collectors.toList());
         }
 
         if (expression.isStringLiteralExpr()) {
-            return Optional.of(expression.asStringLiteralExpr().asString());
+            return List.of(expression.asStringLiteralExpr().asString());
         }
+
         if (expression.isCharLiteralExpr()) {
             CharLiteralExpr literal = expression.asCharLiteralExpr();
-            return Optional.of(String.valueOf(literal.getValue()));
+            return List.of(String.valueOf(literal.getValue()));
         }
-        if (expression.isArrayInitializerExpr()) {
-            ArrayInitializerExpr array = expression.asArrayInitializerExpr();
-            for (Expression value : array.getValues()) {
-                Optional<String> nested = extractStringValue(value);
-                if (nested.isPresent()) {
-                    return nested;
-                }
-            }
-            return Optional.empty();
-        }
+
         if (expression.isNameExpr()) {
-            return Optional.of(expression.asNameExpr().toString());
+            return List.of(expression.asNameExpr().toString());
         }
+
         if (expression.isFieldAccessExpr()) {
-            FieldAccessExpr fieldAccessExpr = expression.asFieldAccessExpr();
-            return Optional.of(fieldAccessExpr.toString());
+            return List.of(expression.asFieldAccessExpr().toString());
         }
+
         if (expression.isMethodCallExpr()) {
-            MethodCallExpr methodCallExpr = expression.asMethodCallExpr();
-            return Optional.of(methodCallExpr.toString());
+            return List.of(expression.asMethodCallExpr().toString());
         }
-        return Optional.of(expression.toString().replace("\"", ""));
+
+        return List.of(stripQuotes(expression.toString()).replace("\"", ""));
     }
 
     private static List<String> extractMethodNames(Expression expression) {
@@ -189,26 +218,6 @@ public class EndpointTemplate {
         }
 
         return expression.toString().isEmpty() ? List.of() : List.of(expression.toString());
-    }
-
-    private static HttpMethod mergeHttpMethods(List<String> methods) {
-        if (methods == null || methods.isEmpty()) {
-            return HttpMethod.ALL;
-        }
-
-        HttpMethod first = httpFromMapping(methods.get(0));
-        if (methods.size() == 1) {
-            return first;
-        }
-
-        for (int i = 1; i < methods.size(); i++) {
-            HttpMethod next = httpFromMapping(methods.get(i));
-            if (!next.equals(first)) {
-                return HttpMethod.ALL;
-            }
-        }
-
-        return first;
     }
 
     private static String normalizePath(String candidate) {

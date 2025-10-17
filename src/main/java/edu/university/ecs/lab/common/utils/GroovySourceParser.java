@@ -209,17 +209,23 @@ final class GroovySourceParser {
                     microserviceName, className);
 
             Optional<GroovyAnnotation> mappingAnnotation = findMappingAnnotation(methodAnnotations);
+            List<EndpointTemplate> templates = new ArrayList<>();
             if (mappingAnnotation.isPresent()) {
                 Optional<AnnotationExpr> mappingExpr = mappingAnnotation.get().toAnnotationExpr();
                 if (mappingExpr.isPresent()) {
-                    EndpointTemplate template = new EndpointTemplate(classRequestMapping.orElse(null), mappingExpr.get(),
+                    templates = EndpointTemplate.from(classRequestMapping.orElse(null), mappingExpr.get(),
                             mappingAnnotation.get().simpleName());
-                    method = new Endpoint(method, template.getUrl(), template.getHttpMethod());
-                    discoveredEndpoint = true;
                 }
             }
 
-            methods.add(method);
+            if (!templates.isEmpty()) {
+                discoveredEndpoint = true;
+                for (EndpointTemplate template : templates) {
+                    methods.add(new Endpoint(method, template.getUrl(), template.getHttpMethod()));
+                }
+            } else {
+                methods.add(method);
+            }
         }
 
         if (!discoveredEndpoint) {
@@ -336,7 +342,7 @@ final class GroovySourceParser {
             return Optional.empty();
         }
 
-        Map<String, String> attributes = parseAttributeMap(args);
+        Map<String, GroovyAttribute> attributes = parseAttributeMap(args);
         return Optional.of(new GroovyAnnotation(name, attributes, raw));
     }
 

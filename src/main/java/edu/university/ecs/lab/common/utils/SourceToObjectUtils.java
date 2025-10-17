@@ -178,9 +178,12 @@ public class SourceToObjectUtils {
                     microserviceName,
                     className);
 
-            method = convertValidEndpoints(methodDeclaration, method, requestMapping);
-
-            methods.add(method);
+            Collection<Endpoint> endpoints = convertValidEndpoints(methodDeclaration, method, requestMapping);
+            if (endpoints.isEmpty()) {
+                methods.add(method);
+            } else {
+                methods.addAll(endpoints);
+            }
         }
 
         return methods;
@@ -194,20 +197,20 @@ public class SourceToObjectUtils {
      * @param requestMapping    the class level requestMapping
      * @return returns method if it is invalid, otherwise a new Endpoint
      */
-    public static Method convertValidEndpoints(MethodDeclaration methodDeclaration, Method method, AnnotationExpr requestMapping) {
+    public static Collection<Endpoint> convertValidEndpoints(MethodDeclaration methodDeclaration, Method method, AnnotationExpr requestMapping) {
+        List<Endpoint> endpoints = new ArrayList<>();
         for (AnnotationExpr ae : methodDeclaration.getAnnotations()) {
             Optional<String> resolvedMappingName = resolveEndpointMappingName(ae);
             if (resolvedMappingName.isPresent()) {
                 AnnotationExpr effectiveAnnotation = resolveEffectiveMappingAnnotation(ae, resolvedMappingName.get());
-                EndpointTemplate endpointTemplate = new EndpointTemplate(requestMapping, effectiveAnnotation, resolvedMappingName.get());
-
-                // By Spring documentation, only the first valid @Mapping annotation is considered;
-                // And getAnnotations() return them in order, so we can return immediately
-                return new Endpoint(method, endpointTemplate.getUrl(), endpointTemplate.getHttpMethod());
+                List<EndpointTemplate> templates = EndpointTemplate.from(requestMapping, effectiveAnnotation, resolvedMappingName.get());
+                for (EndpointTemplate template : templates) {
+                    endpoints.add(new Endpoint(method, template.getUrl(), template.getHttpMethod()));
+                }
             }
         }
 
-        return method;
+        return endpoints;
     }
 
 
