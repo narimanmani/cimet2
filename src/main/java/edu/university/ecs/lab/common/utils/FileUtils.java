@@ -12,7 +12,7 @@ import java.util.stream.Collectors;
  * Manages all file paths and file path conversion functions.
  */
 public class FileUtils {
-    public static final Set<String> VALID_FILES = Set.of("pom.xml", ".java", ".yml", "build.gradle", ".groovy");
+    public static final Set<String> VALID_FILES = Set.of("pom.xml", ".java", ".yml", "build.gradle", ".groovy", ".kt");
     public static final String SYS_SEPARATOR = System.getProperty("file.separator");
     public static final String SPECIAL_SEPARATOR = SYS_SEPARATOR.replace("\\", "\\\\");
     private static final String DEFAULT_OUTPUT_PATH = "output";
@@ -148,7 +148,7 @@ public class FileUtils {
      * @return boolean true if it is a configuration file
      */
     public static boolean isConfigurationFile(String path) {
-        return isValidFile(path) && !path.endsWith(".java") && !path.endsWith(".groovy");
+        return isValidFile(path) && !path.endsWith(".java") && !path.endsWith(".groovy") && !path.endsWith(".kt");
     }
 
 }

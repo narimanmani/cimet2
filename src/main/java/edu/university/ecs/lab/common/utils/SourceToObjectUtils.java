@@ -95,6 +95,10 @@ public class SourceToObjectUtils {
         if (sourceFile.getName().endsWith(".groovy")) {
             return handleGroovy(sourceFile, config, microserviceName);
         }
+        // Route Kotlin files to a lightweight Kotlin handler
+        if (sourceFile.getName().endsWith(".kt")) {
+            return handleKotlin(sourceFile, config, microserviceName);
+        }
 
         generateStaticValues(sourceFile, config);
         if (!microserviceName.isEmpty()) {
@@ -618,6 +622,47 @@ public class SourceToObjectUtils {
             return jClass;
         } catch (Exception e) {
             LoggerManager.warn(() -> "Failed to parse groovy file " + sourceFile.getPath() + ": " + e.getMessage());
+            return null;
+        }
+    }
+
+    private static JClass handleKotlin(File sourceFile, Config config, String microserviceName) {
+        try {
+            String content = Files.readString(sourceFile.toPath(), StandardCharsets.UTF_8);
+
+            // Extract package name: Kotlin uses the same 'package' declaration syntax
+            String pkg = "";
+            Matcher pkgMatcher = Pattern.compile("^\\s*package\\s+([a-zA-Z0-9_\\.]+)", Pattern.MULTILINE).matcher(content);
+            if (pkgMatcher.find()) {
+                pkg = pkgMatcher.group(1);
+            }
+
+            String clsName = sourceFile.getName().replace(".kt", "");
+            String gitPath = FileUtils.localPathToGitPath(sourceFile.getPath(), config.getRepoName());
+
+            // Determine class role by common Spring annotations in Kotlin
+            ClassRole role = ClassRole.UNKNOWN;
+            if (content.contains("@FeignClient")) {
+                role = ClassRole.FEIGN_CLIENT;
+            } else if (content.contains("@RepositoryRestResource")) {
+                role = ClassRole.REP_REST_RSC;
+            } else if (content.contains("@RestController") || content.contains("@Controller")) {
+                role = ClassRole.CONTROLLER;
+            } else if (content.contains("@Service") || content.contains("@Component")) {
+                role = ClassRole.SERVICE;
+            }
+
+            if (role.equals(ClassRole.UNKNOWN)) {
+                LoggerManager.warn(() -> "JClass filtered  " + sourceFile.getPath() + " class role unknown (kotlin)");
+                return null;
+            }
+
+            // Minimal JClass for Kotlin
+            JClass jClass = new JClass(clsName, gitPath, pkg, role);
+            jClass.updateMicroserviceName(microserviceName);
+            return jClass;
+        } catch (Exception e) {
+            LoggerManager.warn(() -> "Failed to parse kotlin file " + sourceFile.getPath() + ": " + e.getMessage());
             return null;
         }
     }
