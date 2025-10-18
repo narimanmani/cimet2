@@ -1,0 +1,59 @@
+name: Spinnaker Zip Endpoint Analysis
+
+on:
+  workflow_dispatch:
+    inputs:
+      include-tests:
+        description: Include test sources when scanning for endpoints
+        required: false
+        default: 'false'
+      zip-path:
+        description: Path to the Spinnaker source zip relative to the repo root
+        required: false
+        default: spinnaker4-cd8506c46f962d9de186c8a5249bafd6fcfddc79.zip
+
+jobs:
+  analyze:
+    name: Analyze Spinnaker Zip
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Ensure archive exists
+        id: ensure-archive
+        shell: bash
+        run: |
+          ZIP_PATH="${{ github.event.inputs.zip-path }}"
+          if [ -z "$ZIP_PATH" ]; then
+            ZIP_PATH="spinnaker4-cd8506c46f962d9de186c8a5249bafd6fcfddc79.zip"
+          fi
+          echo "zip_path=$ZIP_PATH" >> "$GITHUB_OUTPUT"
+          if [ ! -f "$ZIP_PATH" ]; then
+            echo "Archive not found at $ZIP_PATH" >&2
+            exit 1
+          fi
+
+      - name: Run analyzer
+        shell: bash
+        run: |
+          INCLUDE_TESTS="${{ github.event.inputs.include-tests }}"
+          if [ "$INCLUDE_TESTS" = "true" ]; then
+            EXTRA_FLAG="--include-tests"
+          else
+            EXTRA_FLAG=""
+          fi
+          python scripts/analyze_spinnaker_zip.py "${{ steps.ensure-archive.outputs.zip_path }}" $EXTRA_FLAG \
+            > spinnaker-endpoints.csv
+
+      - name: Upload endpoint inventory
+        uses: actions/upload-artifact@v4
+        with:
+          name: spinnaker-endpoints
+          path: spinnaker-endpoints.csv
+          if-no-files-found: error
