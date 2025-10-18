@@ -1,0 +1,77 @@
+name: Spinnaker Endpoint Inventory
+
+on:
+  workflow_dispatch:
+    inputs:
+      archive_path:
+        description: 'Path to the Spinnaker source archive relative to the repository root'
+        required: true
+        default: 'spinnaker4-cd8506c46f962d9de186c8a5249bafd6fcfddc79.zip'
+      include_tests:
+        description: 'Include test sources when scanning for endpoints'
+        type: boolean
+        default: false
+
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Validate Spinnaker archive path
+        id: validate
+        env:
+          ARCHIVE_INPUT: ${{ inputs.archive_path }}
+        run: |
+          set -euo pipefail
+          python <<'PY'
+            import os
+            import pathlib
+            import sys
+
+            archive_input = os.environ.get("ARCHIVE_INPUT", "").strip()
+            if not archive_input:
+                print("The archive_path input must not be empty.", file=sys.stderr)
+                sys.exit(1)
+
+            workspace = pathlib.Path(os.environ["GITHUB_WORKSPACE"]).resolve()
+            candidate = pathlib.Path(archive_input)
+            if not candidate.is_absolute():
+                candidate = (workspace / candidate).resolve()
+            else:
+                candidate = candidate.resolve()
+
+            try:
+                candidate.relative_to(workspace)
+            except ValueError:
+                print("The archive must be located within the repository workspace.", file=sys.stderr)
+                sys.exit(1)
+
+            if not candidate.is_file():
+                print(f"Archive not found: {candidate}", file=sys.stderr)
+                sys.exit(1)
+
+            with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as fh:
+                fh.write(f"archive={candidate}\n")
+          PY
+
+      - name: Extract Spring endpoints
+        env:
+          ARCHIVE: ${{ steps.validate.outputs.archive }}
+          INCLUDE_TESTS: ${{ inputs.include_tests }}
+        run: |
+          set -euo pipefail
+          OUTPUT_FILE="spinnaker-endpoints.csv"
+          if [[ "${INCLUDE_TESTS}" == 'true' ]]; then
+            python scripts/analyze_spinnaker_zip.py "${ARCHIVE}" --include-tests > "${OUTPUT_FILE}"
+          else
+            python scripts/analyze_spinnaker_zip.py "${ARCHIVE}" > "${OUTPUT_FILE}"
+          fi
+
+      - name: Upload endpoint inventory
+        uses: actions/upload-artifact@v4
+        with:
+          name: spinnaker-endpoints-${{ github.run_id }}
+          path: spinnaker-endpoints.csv
+          if-no-files-found: error
