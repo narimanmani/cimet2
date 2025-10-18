@@ -8,6 +8,7 @@ import com.github.javaparser.ast.body.*;
 import com.github.javaparser.ast.body.Parameter;
 import com.github.javaparser.ast.expr.*;
 import com.github.javaparser.ast.nodeTypes.NodeWithSimpleName;
+import com.github.javaparser.resolution.declarations.ResolvedAnnotationDeclaration;
 import com.github.javaparser.resolution.UnsolvedSymbolException;
 import com.github.javaparser.symbolsolver.JavaSymbolSolver;
 import com.github.javaparser.symbolsolver.javaparsermodel.JavaParserFacade;
@@ -29,6 +30,7 @@ import java.io.BufferedReader;
 import java.io.File;
 import java.io.InputStreamReader;
 import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
 
 /**
@@ -43,6 +45,8 @@ public class SourceToObjectUtils {
     private static String packageAndClassName;
     private static CombinedTypeSolver combinedTypeSolver;
     private static Config config;
+    private static final Map<String, Set<String>> ANNOTATION_META_NAMES = new ConcurrentHashMap<>();
+    private static final Map<String, Set<String>> ANNOTATION_META_EXPRESSIONS = new ConcurrentHashMap<>();
 
 
     private static void generateStaticValues(File sourceFile, Config config1) {
@@ -60,6 +64,7 @@ public class SourceToObjectUtils {
             packageName = cu.findAll(PackageDeclaration.class).get(0).getNameAsString();
             packageAndClassName = packageName + "." + sourceFile.getName().replace(".java", "");
         }
+        indexAnnotationDeclarations();
         path = FileUtils.localPathToGitPath(sourceFile.getPath(), config.getRepoName());
 
         TypeSolver reflectionTypeSolver = new ReflectionTypeSolver();
@@ -88,6 +93,32 @@ public class SourceToObjectUtils {
             return null;
         }
 
+        if (!FileUtils.isCodeFile(sourceFile.getPath())) {
+            LoggerManager.debug(() -> "Skipping unsupported source file " + sourceFile.getPath());
+            return null;
+        }
+
+        String lowerName = sourceFile.getName().toLowerCase(Locale.ROOT);
+
+        if (lowerName.endsWith(".groovy")) {
+            if (!microserviceName.isEmpty()) {
+                SourceToObjectUtils.microserviceName = microserviceName;
+            }
+            return GroovySourceParser.parse(sourceFile, config, microserviceName);
+        }
+
+        if (lowerName.endsWith(".kt") || lowerName.endsWith(".kts")) {
+            if (!microserviceName.isEmpty()) {
+                SourceToObjectUtils.microserviceName = microserviceName;
+            }
+            return KotlinSourceParser.parse(sourceFile, config, microserviceName);
+        }
+
+        if (!lowerName.endsWith(".java")) {
+            LoggerManager.debug(() -> "Skipping non-Java source file " + sourceFile.getPath());
+            return null;
+        }
+
         generateStaticValues(sourceFile, config);
         if (!microserviceName.isEmpty()) {
             SourceToObjectUtils.microserviceName = microserviceName;
@@ -95,7 +126,7 @@ public class SourceToObjectUtils {
 
         // Calculate early to determine classrole based on annotation, filter for class based annotations only
         Set<AnnotationExpr> classAnnotations = filterClassAnnotations();
-        AnnotationExpr requestMapping = classAnnotations.stream().filter(ae -> ae.getNameAsString().equals("RequestMapping")).findFirst().orElse(null);
+        AnnotationExpr requestMapping = findRequestMappingAnnotation(classAnnotations);
 
         ClassRole classRole = parseClassRole(classAnnotations);
 
@@ -154,9 +185,12 @@ public class SourceToObjectUtils {
                     microserviceName,
                     className);
 
-            method = convertValidEndpoints(methodDeclaration, method, requestMapping);
-
-            methods.add(method);
+            Collection<Endpoint> endpoints = convertValidEndpoints(methodDeclaration, method, requestMapping);
+            if (endpoints.isEmpty()) {
+                methods.add(method);
+            } else {
+                methods.addAll(endpoints);
+            }
         }
 
         return methods;
@@ -170,19 +204,20 @@ public class SourceToObjectUtils {
      * @param requestMapping    the class level requestMapping
      * @return returns method if it is invalid, otherwise a new Endpoint
      */
-    public static Method convertValidEndpoints(MethodDeclaration methodDeclaration, Method method, AnnotationExpr requestMapping) {
+    public static Collection<Endpoint> convertValidEndpoints(MethodDeclaration methodDeclaration, Method method, AnnotationExpr requestMapping) {
+        List<Endpoint> endpoints = new ArrayList<>();
         for (AnnotationExpr ae : methodDeclaration.getAnnotations()) {
-            String ae_name = ae.getNameAsString();
-            if (EndpointTemplate.ENDPOINT_ANNOTATIONS.contains(ae_name)) {
-                EndpointTemplate endpointTemplate = new EndpointTemplate(requestMapping, ae);
-
-                // By Spring documentation, only the first valid @Mapping annotation is considered;
-                // And getAnnotations() return them in order, so we can return immediately
-                return new Endpoint(method, endpointTemplate.getUrl(), endpointTemplate.getHttpMethod());
+            Optional<String> resolvedMappingName = resolveEndpointMappingName(ae);
+            if (resolvedMappingName.isPresent()) {
+                AnnotationExpr effectiveAnnotation = resolveEffectiveMappingAnnotation(ae, resolvedMappingName.get());
+                List<EndpointTemplate> templates = EndpointTemplate.from(requestMapping, effectiveAnnotation, resolvedMappingName.get());
+                for (EndpointTemplate template : templates) {
+                    endpoints.add(new Endpoint(method, template.getUrl(), template.getHttpMethod()));
+                }
             }
         }
 
-        return method;
+        return endpoints;
     }
 
 
@@ -331,24 +366,297 @@ public class SourceToObjectUtils {
      */
     private static ClassRole parseClassRole(Set<AnnotationExpr> annotations) {
         for (AnnotationExpr annotation : annotations) {
-            switch (annotation.getNameAsString()) {
-                case "RestController":
-                case "Controller":
-                    return ClassRole.CONTROLLER;
-                case "Service":
-                    return ClassRole.SERVICE;
-                case "Repository":
-                    return ClassRole.REPOSITORY;
-                case "RepositoryRestResource":
-                    return ClassRole.REP_REST_RSC;
-                case "Entity":
-                case "Embeddable":
-                    return ClassRole.ENTITY;
-                case "FeignClient":
-                    return ClassRole.FEIGN_CLIENT;
+            ClassRole classRole = resolveClassRole(annotation, new HashSet<>());
+            if (!ClassRole.UNKNOWN.equals(classRole)) {
+                return classRole;
             }
         }
         return ClassRole.UNKNOWN;
+    }
+
+    private static ClassRole resolveClassRole(AnnotationExpr annotation, Set<String> visited) {
+        ClassRole directRole = mapAnnotationToRole(annotation.getNameAsString());
+        if (!ClassRole.UNKNOWN.equals(directRole)) {
+            return directRole;
+        }
+
+        try {
+            ResolvedAnnotationDeclaration resolvedAnnotation = annotation.resolve();
+            String qualifiedName = resolvedAnnotation.getQualifiedName();
+            if (qualifiedName != null) {
+                ClassRole qualifiedRole = mapAnnotationToRole(qualifiedName);
+                if (!ClassRole.UNKNOWN.equals(qualifiedRole)) {
+                    return qualifiedRole;
+                }
+            }
+
+            String visitKey = qualifiedName != null ? qualifiedName : annotation.getNameAsString();
+            if (!visitKey.isEmpty() && !visited.add(visitKey)) {
+                return ClassRole.UNKNOWN;
+            }
+
+            Optional<? extends AnnotationDeclaration> declaration = resolvedAnnotation.toAst();
+            if (declaration.isPresent()) {
+                for (AnnotationExpr metaAnnotation : declaration.get().getAnnotations()) {
+                    ClassRole metaRole = resolveClassRole(metaAnnotation, visited);
+                    if (!ClassRole.UNKNOWN.equals(metaRole)) {
+                        return metaRole;
+                    }
+                }
+            }
+        } catch (UnsolvedSymbolException | UnsupportedOperationException e) {
+            LoggerManager.debug(() -> String.format("Unable to resolve class role for annotation %s: %s", annotation, e.getMessage()));
+        } catch (RuntimeException e) {
+            LoggerManager.debug(() -> String.format("Unexpected error while resolving class role for annotation %s: %s", annotation, e.getMessage()));
+        }
+
+        return resolveClassRoleFromCache(annotation.getNameAsString(), visited);
+    }
+
+    static ClassRole mapAnnotationToRole(String annotationName) {
+        String simpleName = simpleName(annotationName);
+        switch (simpleName) {
+            case "RestController":
+            case "Controller":
+                return ClassRole.CONTROLLER;
+            case "Service":
+                return ClassRole.SERVICE;
+            case "Repository":
+                return ClassRole.REPOSITORY;
+            case "RepositoryRestResource":
+                return ClassRole.REP_REST_RSC;
+            case "Entity":
+            case "Embeddable":
+                return ClassRole.ENTITY;
+            case "FeignClient":
+                return ClassRole.FEIGN_CLIENT;
+            default:
+                return ClassRole.UNKNOWN;
+        }
+    }
+
+    private static ClassRole resolveClassRoleFromCache(String annotationName, Set<String> visited) {
+        for (String variant : annotationNameVariants(annotationName)) {
+            if (!visited.add(variant)) {
+                continue;
+            }
+
+            Set<String> metaNames = ANNOTATION_META_NAMES.getOrDefault(variant, Collections.emptySet());
+            for (String metaName : metaNames) {
+                ClassRole direct = mapAnnotationToRole(metaName);
+                if (!ClassRole.UNKNOWN.equals(direct)) {
+                    return direct;
+                }
+
+                ClassRole nested = resolveClassRoleFromCache(metaName, visited);
+                if (!ClassRole.UNKNOWN.equals(nested)) {
+                    return nested;
+                }
+            }
+        }
+
+        return ClassRole.UNKNOWN;
+    }
+
+    private static Optional<String> resolveEndpointMappingName(AnnotationExpr annotationExpr) {
+        return resolveEndpointMappingName(annotationExpr, new HashSet<>());
+    }
+
+    private static Optional<String> resolveEndpointMappingName(AnnotationExpr annotationExpr, Set<String> visited) {
+        String simpleName = simpleName(annotationExpr.getNameAsString());
+        if (EndpointTemplate.ENDPOINT_ANNOTATIONS.contains(simpleName)) {
+            return Optional.of(simpleName);
+        }
+
+        try {
+            ResolvedAnnotationDeclaration resolvedAnnotation = annotationExpr.resolve();
+            String qualifiedName = resolvedAnnotation.getQualifiedName();
+            if (qualifiedName != null) {
+                String qualifiedSimpleName = simpleName(qualifiedName);
+                if (EndpointTemplate.ENDPOINT_ANNOTATIONS.contains(qualifiedSimpleName)) {
+                    return Optional.of(qualifiedSimpleName);
+                }
+            }
+
+            String visitKey = qualifiedName != null ? qualifiedName : annotationExpr.getNameAsString();
+            if (!visitKey.isEmpty() && !visited.add(visitKey)) {
+                return Optional.empty();
+            }
+
+            Optional<? extends AnnotationDeclaration> declaration = resolvedAnnotation.toAst();
+            if (declaration.isPresent()) {
+                for (AnnotationExpr metaAnnotation : declaration.get().getAnnotations()) {
+                    Optional<String> resolvedMapping = resolveEndpointMappingName(metaAnnotation, visited);
+                    if (resolvedMapping.isPresent()) {
+                        return resolvedMapping;
+                    }
+                }
+            }
+        } catch (UnsolvedSymbolException | UnsupportedOperationException e) {
+            LoggerManager.debug(() -> String.format("Unable to resolve endpoint annotation %s: %s", annotationExpr, e.getMessage()));
+        } catch (RuntimeException e) {
+            LoggerManager.debug(() -> String.format("Unexpected error while resolving endpoint annotation %s: %s", annotationExpr, e.getMessage()));
+        }
+
+        return resolveEndpointMappingNameFromCache(annotationExpr.getNameAsString(), visited);
+    }
+
+    private static Optional<String> resolveEndpointMappingNameFromCache(String annotationName, Set<String> visited) {
+        for (String variant : annotationNameVariants(annotationName)) {
+            if (!visited.add(variant)) {
+                continue;
+            }
+
+            Set<String> metaNames = ANNOTATION_META_NAMES.getOrDefault(variant, Collections.emptySet());
+            for (String metaName : metaNames) {
+                String simple = simpleName(metaName);
+                if (EndpointTemplate.ENDPOINT_ANNOTATIONS.contains(simple)) {
+                    return Optional.of(simple);
+                }
+
+                Optional<String> nested = resolveEndpointMappingNameFromCache(metaName, visited);
+                if (nested.isPresent()) {
+                    return nested;
+                }
+            }
+        }
+
+        return Optional.empty();
+    }
+
+    private static String simpleName(String name) {
+        if (name == null) {
+            return "";
+        }
+        int lastDotIndex = name.lastIndexOf('.');
+        return lastDotIndex >= 0 ? name.substring(lastDotIndex + 1) : name;
+    }
+
+    private static Set<String> annotationNameVariants(String name) {
+        if (name == null || name.isEmpty()) {
+            return Collections.emptySet();
+        }
+
+        String simple = simpleName(name);
+        if (simple.equals(name)) {
+            return Set.of(name);
+        }
+
+        return Set.of(name, simple);
+    }
+
+    private static void indexAnnotationDeclarations() {
+        if (cu == null) {
+            return;
+        }
+
+        Optional<String> optionalPackage = cu.getPackageDeclaration().map(PackageDeclaration::getNameAsString);
+
+        for (AnnotationDeclaration declaration : cu.findAll(AnnotationDeclaration.class)) {
+            String simple = declaration.getNameAsString();
+            String qualified = optionalPackage.map(pkg -> pkg + "." + simple).orElse(simple);
+
+            for (AnnotationExpr metaAnnotation : declaration.getAnnotations()) {
+                registerAnnotationMetadata(simple, metaAnnotation);
+                registerAnnotationMetadata(qualified, metaAnnotation);
+            }
+        }
+    }
+
+    private static void registerAnnotationMetadata(String annotationName, AnnotationExpr metaAnnotation) {
+        if (annotationName == null || annotationName.isEmpty() || metaAnnotation == null) {
+            return;
+        }
+
+        ANNOTATION_META_NAMES
+                .computeIfAbsent(annotationName, key -> new LinkedHashSet<>())
+                .add(metaAnnotation.getNameAsString());
+
+        ANNOTATION_META_EXPRESSIONS
+                .computeIfAbsent(annotationName, key -> new LinkedHashSet<>())
+                .add(metaAnnotation.toString());
+    }
+
+    private static AnnotationExpr findRequestMappingAnnotation(Set<AnnotationExpr> classAnnotations) {
+        for (AnnotationExpr annotation : classAnnotations) {
+            Optional<String> mapping = resolveEndpointMappingName(annotation);
+            if (mapping.isPresent() && "RequestMapping".equals(mapping.get())) {
+                return resolveEffectiveMappingAnnotation(annotation, mapping.get());
+            }
+        }
+
+        for (AnnotationExpr annotation : classAnnotations) {
+            Optional<AnnotationExpr> meta = resolveMetaAnnotationExpression(annotation.getNameAsString(), "RequestMapping", new HashSet<>());
+            if (meta.isPresent()) {
+                return meta.get();
+            }
+        }
+
+        return null;
+    }
+
+    private static Optional<AnnotationExpr> resolveMetaAnnotationExpression(String annotationName, String targetSimpleName, Set<String> visited) {
+        for (String variant : annotationNameVariants(annotationName)) {
+            if (!visited.add(variant)) {
+                continue;
+            }
+
+            Set<String> expressions = ANNOTATION_META_EXPRESSIONS.getOrDefault(variant, Collections.emptySet());
+            for (String expression : expressions) {
+                AnnotationExpr parsed;
+                try {
+                    parsed = StaticJavaParser.parseAnnotation(expression);
+                } catch (Exception e) {
+                    LoggerManager.debug(() -> String.format("Unable to parse meta-annotation expression %s: %s", expression, e.getMessage()));
+                    continue;
+                }
+
+                String parsedName = parsed.getNameAsString();
+                if (targetSimpleName.equals(simpleName(parsedName))) {
+                    return Optional.of(parsed);
+                }
+
+                Optional<AnnotationExpr> nested = resolveMetaAnnotationExpression(parsedName, targetSimpleName, visited);
+                if (nested.isPresent()) {
+                    return nested;
+                }
+            }
+        }
+
+        return Optional.empty();
+    }
+
+    private static AnnotationExpr resolveEffectiveMappingAnnotation(AnnotationExpr annotationExpr, String mappingName) {
+        if (annotationExpr == null || mappingName == null) {
+            return annotationExpr;
+        }
+
+        if (hasExplicitPath(annotationExpr)) {
+            return annotationExpr;
+        }
+
+        Optional<AnnotationExpr> meta = resolveMetaAnnotationExpression(annotationExpr.getNameAsString(), mappingName, new HashSet<>());
+        return meta.orElse(annotationExpr);
+    }
+
+    private static boolean hasExplicitPath(AnnotationExpr annotationExpr) {
+        if (annotationExpr == null) {
+            return false;
+        }
+
+        if (annotationExpr.isSingleMemberAnnotationExpr()) {
+            return true;
+        }
+
+        if (annotationExpr.isNormalAnnotationExpr()) {
+            for (MemberValuePair pair : annotationExpr.asNormalAnnotationExpr().getPairs()) {
+                if (pair.getNameAsString().equals("value") || pair.getNameAsString().equals("path")) {
+                    return true;
+                }
+            }
+        }
+
+        return false;
     }
 
     /**
@@ -437,6 +745,8 @@ public class SourceToObjectUtils {
         } else if(file.getName().equals("pom.xml")) {
             return NonJsonReadWriteUtils.readFromPom(file.getPath(), config);
         } else if (file.getName().equals("build.gradle")){
+            return NonJsonReadWriteUtils.readFromGradle(file.getPath(), config);
+        } else if (file.getName().equals("build.gradle.kts")) {
             return NonJsonReadWriteUtils.readFromGradle(file.getPath(), config);
         } else {
             return null;

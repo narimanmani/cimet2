@@ -16,11 +16,13 @@ import edu.university.ecs.lab.common.models.ir.MicroserviceSystem;
 import edu.university.ecs.lab.delta.models.Delta;
 import edu.university.ecs.lab.delta.models.enums.ChangeType;
 import lombok.Data;
+import lombok.EqualsAndHashCode;
 
 /**
  * Architectural Rule 7 Class: Affected endpoint due to data access logic update
  */
 @Data
+@EqualsAndHashCode(callSuper = false)
 public class AR7 extends AbstractAR {
     protected static final String TYPE = "Architectural Rule 7";
     protected static final String NAME = "Affected endpoint due to data access logic update";
