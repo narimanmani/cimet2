@@ -26,35 +26,35 @@ jobs:
         run: |
           set -euo pipefail
           python <<'PY'
-import os
-import pathlib
-import sys
+          import os
+          import pathlib
+          import sys
 
-archive_input = os.environ.get("ARCHIVE_INPUT", "").strip()
-if not archive_input:
-    print("The archive_path input must not be empty.", file=sys.stderr)
-    sys.exit(1)
+          archive_input = os.environ.get("ARCHIVE_INPUT", "").strip()
+          if not archive_input:
+              print("The archive_path input must not be empty.", file=sys.stderr)
+              sys.exit(1)
 
-workspace = pathlib.Path(os.environ["GITHUB_WORKSPACE"]).resolve()
-candidate = pathlib.Path(archive_input)
-if not candidate.is_absolute():
-    candidate = (workspace / candidate).resolve()
-else:
-    candidate = candidate.resolve()
+          workspace = pathlib.Path(os.environ["GITHUB_WORKSPACE"]).resolve()
+          candidate = pathlib.Path(archive_input)
+          if not candidate.is_absolute():
+              candidate = (workspace / candidate).resolve()
+          else:
+              candidate = candidate.resolve()
 
-try:
-    candidate.relative_to(workspace)
-except ValueError:
-    print("The archive must be located within the repository workspace.", file=sys.stderr)
-    sys.exit(1)
+          try:
+              candidate.relative_to(workspace)
+          except ValueError:
+              print("The archive must be located within the repository workspace.", file=sys.stderr)
+              sys.exit(1)
 
-if not candidate.is_file():
-    print(f"Archive not found: {candidate}", file=sys.stderr)
-    sys.exit(1)
+          if not candidate.is_file():
+              print(f"Archive not found: {candidate}", file=sys.stderr)
+              sys.exit(1)
 
-with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as fh:
-    fh.write(f"archive={candidate}\n")
-PY
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as fh:
+              fh.write(f"archive={candidate}\n")
+          PY
 
       - name: Extract Spring endpoints
         env:
