@@ -12,7 +12,8 @@ import java.util.stream.Collectors;
  * Manages all file paths and file path conversion functions.
  */
 public class FileUtils {
-    public static final Set<String> VALID_FILES = Set.of("pom.xml", ".java", ".yml", "build.gradle");
+    private static final Set<String> CODE_EXTENSIONS = Set.of(".java", ".kt", ".kts", ".groovy");
+    private static final Set<String> CONFIG_FILENAMES = Set.of("pom.xml", "build.gradle", "build.gradle.kts", ".yml", ".yaml");
     public static final String SYS_SEPARATOR = System.getProperty("file.separator");
     public static final String SPECIAL_SEPARATOR = SYS_SEPARATOR.replace("\\", "\\\\");
     private static final String DEFAULT_OUTPUT_PATH = "output";
@@ -131,13 +132,12 @@ public class FileUtils {
             return false;
         }
 
-        for(String f : VALID_FILES) {
-            if(path.endsWith(f)) {
-                return true;
-            }
+        String lowerPath = path.toLowerCase();
+        if (CONFIG_FILENAMES.stream().anyMatch(lowerPath::endsWith)) {
+            return true;
         }
 
-        return false;
+        return CODE_EXTENSIONS.stream().anyMatch(lowerPath::endsWith);
     }
 
     /**
@@ -148,7 +148,13 @@ public class FileUtils {
      * @return boolean true if it is a configuration file
      */
     public static boolean isConfigurationFile(String path) {
-        return isValidFile(path) && !path.endsWith(".java");
+        String lowerPath = path.toLowerCase();
+        return CONFIG_FILENAMES.stream().anyMatch(lowerPath::endsWith);
+    }
+
+    public static boolean isCodeFile(String path) {
+        String lowerPath = path.toLowerCase();
+        return CODE_EXTENSIONS.stream().anyMatch(lowerPath::endsWith);
     }
 
 }

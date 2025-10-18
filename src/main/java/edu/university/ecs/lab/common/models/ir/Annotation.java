@@ -17,7 +17,7 @@ import java.util.stream.Collectors;
  * Represents an annotation in Java
  */
 @Data
-@EqualsAndHashCode
+@EqualsAndHashCode(callSuper = false)
 public class Annotation extends Node {
 
     private Map<String, String> attributes;

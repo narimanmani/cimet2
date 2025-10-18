@@ -1,6 +1,7 @@
 package edu.university.ecs.lab.detection.antipatterns.models;
 
 import lombok.Data;
+import lombok.EqualsAndHashCode;
 
 import java.util.List;
 
@@ -11,6 +12,7 @@ import com.google.gson.JsonObject;
  * Represents a service chain, which is a sequence of services in a network graph.
  */
 @Data
+@EqualsAndHashCode(callSuper = false)
 public class ServiceChain extends AbstractAntiPattern {
     /**
      * Anti-pattern name
