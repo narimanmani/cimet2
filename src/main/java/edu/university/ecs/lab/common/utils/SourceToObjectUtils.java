@@ -91,15 +91,28 @@ public class SourceToObjectUtils {
             return null;
         }
 
-        // Route Groovy files to a lightweight Groovy handler
-        if (sourceFile.getName().endsWith(".groovy")) {
-            return handleGroovy(sourceFile, config, microserviceName);
-        }
-        // Route Kotlin files to a lightweight Kotlin handler
-        if (sourceFile.getName().endsWith(".kt")) {
-            return handleKotlin(sourceFile, config, microserviceName);
-        }
+        var fileExtension = sourceFile
+                .getName()
+                .substring(sourceFile.getName().lastIndexOf(".") + 1);
 
+        return switch (getFileExtensions(sourceFile)) {
+            case "groovy" -> handleGroovy(sourceFile, config, microserviceName);
+            case "kt" -> handleKotlin(sourceFile, config, microserviceName);
+            case "java" -> handleJava(sourceFile, config, microserviceName);
+            default ->  {
+                LoggerManager.warn(() -> "JClass filtered  " + sourceFile.getPath() + " unsupported file extension");
+                yield null;
+            }
+        };
+    }
+
+    private static String getFileExtensions(File sourceFile) {
+        return sourceFile
+                .getName()
+                .substring(sourceFile.getName().lastIndexOf(".") + 1);
+    }
+
+    private static JClass handleJava(File sourceFile, Config config, String microserviceName) {
         generateStaticValues(sourceFile, config);
         if (!microserviceName.isEmpty()) {
             SourceToObjectUtils.microserviceName = microserviceName;
@@ -117,7 +130,7 @@ public class SourceToObjectUtils {
             return null;
         }
 
-        JClass jClass = null;
+        JClass jClass;
         if(classRole == ClassRole.FEIGN_CLIENT) {
             jClass = handleFeignClient(requestMapping, classAnnotations);
         } else if(classRole == ClassRole.REP_REST_RSC) {
@@ -137,7 +150,6 @@ public class SourceToObjectUtils {
 
         // Build the JClass
         return jClass;
-
     }
 
 
