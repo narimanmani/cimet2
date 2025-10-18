@@ -13,11 +13,13 @@ import edu.university.ecs.lab.common.utils.FlowUtils;
 import edu.university.ecs.lab.delta.models.Delta;
 import edu.university.ecs.lab.delta.models.enums.ChangeType;
 import lombok.Data;
+import lombok.EqualsAndHashCode;
 
 /**
  * Architectural Rule 1 Class: Floating call due to endpoint removal (internal)
  */
 @Data
+@EqualsAndHashCode(callSuper = false)
 public class AR1 extends AbstractAR {
 
     /**
