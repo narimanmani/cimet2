@@ -234,7 +234,7 @@ public class IRExtractionService {
                  * 2. Refactor for readability and reusability
                  * 3. Check if other projects that are not Spring have a different pattern for where they place test files. Ex, the Kotlin project
                  */
-                if (file.getPath().contains("src/test")) {
+                if (file.getPath().contains("src/test") || file.getPath().contains("config")) {
                     continue;
                 }
                 if (file.isDirectory()) {
