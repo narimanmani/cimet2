@@ -6,6 +6,7 @@ import edu.university.ecs.lab.common.models.enums.FileType;
 import edu.university.ecs.lab.common.models.ir.ConfigFile;
 import org.json.JSONObject;
 import org.json.XML;
+import org.yaml.snakeyaml.LoaderOptions;
 import org.yaml.snakeyaml.Yaml;
 import org.yaml.snakeyaml.constructor.SafeConstructor;
 
@@ -29,13 +30,13 @@ public class NonJsonReadWriteUtils {
     }
 
     /**
-     * This method reads YAML from a file returning structure as JsonObject
+     * This method reads YAML from a file-returning structure as JsonObject
      * @param path the path to the YAML file.
      * @return JsonObject YAML file structure as json object
      */
     public static ConfigFile readFromYaml(String path, Config config) {
         JsonObject data = null;
-        Yaml yaml = new Yaml(new SafeConstructor());
+        Yaml yaml = new Yaml(new SafeConstructor(new LoaderOptions()));
         Gson gson = new Gson();
 
         try (FileInputStream fis = new FileInputStream(path)) {

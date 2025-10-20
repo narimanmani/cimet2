@@ -5,8 +5,6 @@ import edu.university.ecs.lab.common.config.ConfigUtil;
 import edu.university.ecs.lab.common.error.Error;
 import edu.university.ecs.lab.common.services.LoggerManager;
 import edu.university.ecs.lab.intermediate.merge.services.MergeService;
-import org.apache.logging.log4j.Level;
-import org.checkerframework.checker.nullness.Opt;
 
 import java.io.IOException;
 import java.util.Arrays;
