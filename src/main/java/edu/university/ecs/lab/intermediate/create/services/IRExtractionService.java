@@ -228,6 +228,15 @@ public class IRExtractionService {
 
         if (files != null) {
             for (File file : files) {
+                /*
+                 *TODO:
+                 * 1. Add unit test "skip test directories and test files.
+                 * 2. Refactor for readability and reusability
+                 * 3. Check if other projects that are not Spring have a different pattern for where they place test files. Ex, the Kotlin project
+                 */
+                if (file.getPath().contains("src/test") || file.getPath().contains("config")) {
+                    continue;
+                }
                 if (file.isDirectory()) {
                     scanDirectory(file, microservice);
                 } else if (FileUtils.isValidFile(file.getPath())) {
