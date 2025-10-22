@@ -47,6 +47,29 @@ public class SourceToObjectUtils {
     private static CombinedTypeSolver combinedTypeSolver;
     private static Config config;
 
+    /**
+     * This method parses a Java class file and return a JClass object.
+     *
+     * @param sourceFile the file to parse
+     * @return the JClass object representing the file
+     */
+    public static JClass parseClass(File sourceFile, Config config, String microserviceName) {
+        // Guard condition
+        if(Objects.isNull(sourceFile) || FileUtils.isConfigurationFile(sourceFile.getPath())) {
+            LoggerManager.warn(() -> "JClass filtered  " + sourceFile.getPath() + " is config or null");
+            return null;
+        }
+
+        return switch (getFileExtensions(sourceFile)) {
+            case "groovy" -> handleGroovy(sourceFile, config, microserviceName);
+            case "kt" -> handleKotlin(sourceFile, config, microserviceName);
+            case "java" -> handleJava(sourceFile, config, microserviceName);
+            default ->  {
+                LoggerManager.warn(() -> "JClass filtered  " + sourceFile.getPath() + " unsupported file extension");
+                yield null;
+            }
+        };
+    }
 
     private static void generateStaticValues(File sourceFile, Config config1) {
         // Parse the highest level node being compilation unit
@@ -76,34 +99,6 @@ public class SourceToObjectUtils {
         StaticJavaParser.getConfiguration().setSymbolResolver(symbolSolver);
         className = sourceFile.getName().replace(".java", "");
 
-    }
-
-    /**
-     * This method parses a Java class file and return a JClass object.
-     *
-     * @param sourceFile the file to parse
-     * @return the JClass object representing the file
-     */
-    public static JClass parseClass(File sourceFile, Config config, String microserviceName) {
-        // Guard condition
-        if(Objects.isNull(sourceFile) || FileUtils.isConfigurationFile(sourceFile.getPath())) {
-            LoggerManager.warn(() -> "JClass filtered  " + sourceFile.getPath() + " is config or null");
-            return null;
-        }
-
-        var fileExtension = sourceFile
-                .getName()
-                .substring(sourceFile.getName().lastIndexOf(".") + 1);
-
-        return switch (getFileExtensions(sourceFile)) {
-            case "groovy" -> handleGroovy(sourceFile, config, microserviceName);
-            case "kt" -> handleKotlin(sourceFile, config, microserviceName);
-            case "java" -> handleJava(sourceFile, config, microserviceName);
-            default ->  {
-                LoggerManager.warn(() -> "JClass filtered  " + sourceFile.getPath() + " unsupported file extension");
-                yield null;
-            }
-        };
     }
 
     private static String getFileExtensions(File sourceFile) {
@@ -597,85 +592,145 @@ public class SourceToObjectUtils {
         return jClass;
     }
 
+    // ---------- Text-based parsing for Groovy and Kotlin (no JavaParser AST available) ----------
     private static JClass handleGroovy(File sourceFile, Config config, String microserviceName) {
+        return handleTextBasedSource(sourceFile, config, microserviceName, ".groovy");
+    }
+
+    private static JClass handleKotlin(File sourceFile, Config config, String microserviceName) {
+        return handleTextBasedSource(sourceFile, config, microserviceName, ".kt");
+    }
+
+    private static JClass handleTextBasedSource(File sourceFile, Config config, String microserviceName, String extension) {
         try {
             String content = Files.readString(sourceFile.toPath(), StandardCharsets.UTF_8);
 
-            // Extract package name
-            String pkg = "";
-            Matcher pkgMatcher = Pattern.compile("^\\s*package\\s+([a-zA-Z0-9_\\.]+)", Pattern.MULTILINE).matcher(content);
-            if (pkgMatcher.find()) {
-                pkg = pkgMatcher.group(1);
-            }
-
-            String clsName = sourceFile.getName().replace(".groovy", "");
+            String pkg = extractPackage(content);
+            String clsName = sourceFile.getName().replace(extension, "");
             String gitPath = FileUtils.localPathToGitPath(sourceFile.getPath(), config.getRepoName());
 
-            // Determine class role by common Spring annotations in Groovy
-            ClassRole role = ClassRole.UNKNOWN;
-            if (content.contains("@FeignClient")) {
-                role = ClassRole.FEIGN_CLIENT;
-            } else if (content.contains("@RepositoryRestResource")) {
-                role = ClassRole.REP_REST_RSC;
-            } else if (content.contains("@RestController") || content.contains("@Controller")) {
-                role = ClassRole.CONTROLLER;
-            } else if (content.contains("@Service") || content.contains("@Component")) {
-                role = ClassRole.SERVICE;
-            }
-
+            ClassRole role = detectClassRole(content);
             if (role.equals(ClassRole.UNKNOWN)) {
-                LoggerManager.warn(() -> "JClass filtered  " + sourceFile.getPath() + " class role unknown (groovy)");
+                LoggerManager.warn(() -> "JClass filtered  " + sourceFile.getPath() + " class role unknown (" + extension + ")");
                 return null;
             }
 
-            // Minimal JClass for Groovy: endpoints/methods parsing can be added later
-            JClass jClass = new JClass(clsName, gitPath, pkg, role);
+            // Extract class-level base path for controllers; if not a controller/repository, just return minimal class
+            String basePath = extractClassLevelPath(content);
+
+            Set<Method> methods = new HashSet<>();
+            if (role == ClassRole.CONTROLLER || role == ClassRole.REP_REST_RSC) {
+                methods = extractEndpointsFromText(content, pkg + "." + clsName, microserviceName, clsName, basePath);
+            }
+
+            JClass jClass = new JClass(clsName, gitPath, pkg, role, methods, new HashSet<>(), new HashSet<>(), new ArrayList<>(), new HashSet<>());
             jClass.updateMicroserviceName(microserviceName);
             return jClass;
         } catch (Exception e) {
-            LoggerManager.warn(() -> "Failed to parse groovy file " + sourceFile.getPath() + ": " + e.getMessage());
+            LoggerManager.warn(() -> "Failed to parse file " + sourceFile.getPath() + ": " + e.getMessage());
             return null;
         }
     }
 
-    private static JClass handleKotlin(File sourceFile, Config config, String microserviceName) {
-        try {
-            String content = Files.readString(sourceFile.toPath(), StandardCharsets.UTF_8);
+    private static String extractPackage(String content) {
+        Matcher pkgMatcher = Pattern.compile("^\\s*package\\s+([a-zA-Z0-9_\\.]+)", Pattern.MULTILINE).matcher(content);
+        return pkgMatcher.find() ? pkgMatcher.group(1) : "";
+    }
 
-            // Extract package name: Kotlin uses the same 'package' declaration syntax
-            String pkg = "";
-            Matcher pkgMatcher = Pattern.compile("^\\s*package\\s+([a-zA-Z0-9_\\.]+)", Pattern.MULTILINE).matcher(content);
-            if (pkgMatcher.find()) {
-                pkg = pkgMatcher.group(1);
-            }
+    private static ClassRole detectClassRole(String content) {
+        if (content.contains("@FeignClient")) return ClassRole.FEIGN_CLIENT;
+        if (content.contains("@RepositoryRestResource")) return ClassRole.REP_REST_RSC;
+        if (content.contains("@RestController") || content.contains("@Controller")) return ClassRole.CONTROLLER;
+        if (content.contains("@Service")) return ClassRole.SERVICE;
+        if (content.contains("@Component")) return ClassRole.SERVICE; // treat component as service
+        return ClassRole.UNKNOWN;
+    }
 
-            String clsName = sourceFile.getName().replace(".kt", "");
-            String gitPath = FileUtils.localPathToGitPath(sourceFile.getPath(), config.getRepoName());
-
-            // Determine class role by common Spring annotations in Kotlin
-            ClassRole role = ClassRole.UNKNOWN;
-            if (content.contains("@FeignClient")) {
-                role = ClassRole.FEIGN_CLIENT;
-            } else if (content.contains("@RepositoryRestResource")) {
-                role = ClassRole.REP_REST_RSC;
-            } else if (content.contains("@RestController") || content.contains("@Controller")) {
-                role = ClassRole.CONTROLLER;
-            } else if (content.contains("@Service") || content.contains("@Component")) {
-                role = ClassRole.SERVICE;
-            }
-
-            if (role.equals(ClassRole.UNKNOWN)) {
-                LoggerManager.warn(() -> "JClass filtered  " + sourceFile.getPath() + " class role unknown (kotlin)");
-                return null;
-            }
-
-            // Minimal JClass for Kotlin
-            JClass jClass = new JClass(clsName, gitPath, pkg, role);
-            jClass.updateMicroserviceName(microserviceName);
-            return jClass;
-        } catch (Exception e) {
-            LoggerManager.warn(() -> "Failed to parse kotlin file " + sourceFile.getPath() + ": " + e.getMessage());
-            return null;
+    private static String extractClassLevelPath(String content) {
+        // Try to find @RequestMapping at class level; take the one nearest before "class" declaration
+        // Simplified: take first occurrence
+        Matcher m = Pattern.compile("@RequestMapping\\s*\\(([^)]*)\\)").matcher(content);
+        if (m.find()) {
+            String args = m.group(1);
+            String val = extractPathValue(args);
+            return normalizePath(val);
         }
+        return "";
+    }
+
+    private static Set<Method> extractEndpointsFromText(String content, String packageAndClassName, String microserviceName, String className, String basePath) {
+        Set<Method> methods = new HashSet<>();
+
+        // Pattern finds mapping annotation and captures its argument list, then the following method signature line to capture method name
+        Pattern mappingPattern = Pattern.compile("@(GetMapping|PostMapping|PutMapping|DeleteMapping|PatchMapping|RequestMapping)\\s*(?:\\(([^)]*)\\))?[^\n]*\n\\s*(?:public|private|protected|internal|suspend|final|open|data|static|default|inline|override|abstract|def|fun|[a-zA-Z_][a-zA-Z0-9_<>\\[\\] \\.:=]*)\\s+([a-zA-Z_][a-zA-Z0-9_]*)\\s*\\(", Pattern.MULTILINE);
+        Matcher matcher = mappingPattern.matcher(content);
+
+        while (matcher.find()) {
+            String annotationName = matcher.group(1);
+            String args = matcher.group(2) != null ? matcher.group(2) : "";
+            String methodName = matcher.group(3);
+
+            String pathArg = extractPathValue(args);
+            HttpMethod httpMethod = httpFromAnnotation(annotationName, args);
+
+            String finalUrl = combinePaths(basePath, pathArg);
+            finalUrl = EndpointTemplate.simplifyEndpointURL(finalUrl);
+
+            // Build minimal Method and Endpoint
+            Method method = new Method(methodName, packageAndClassName, new HashSet<>(), "Object", new HashSet<>(), microserviceName, className);
+            methods.add(new Endpoint(method, finalUrl, httpMethod));
+        }
+
+        return methods;
+    }
+
+    private static String extractPathValue(String args) {
+        // Support value="/x", path="/x", or single string argument
+        if (args == null) return "";
+        Matcher single = Pattern.compile("^\\s*\"([^\"]*)\"\\s*$").matcher(args.trim());
+        if (single.find()) return single.group(1);
+
+        Matcher pathPair = Pattern.compile("(?:path|value)\\s*=\\s*\"([^\"]*)\"").matcher(args);
+        if (pathPair.find()) return pathPair.group(1);
+        // In Groovy, single quotes may be used
+        Matcher pathPairGroovy = Pattern.compile("(?:path|value)\\s*=\\s*'(.*?)'").matcher(args);
+        if (pathPairGroovy.find()) return pathPairGroovy.group(1);
+
+        // Kotlin named arg without equals: value = arrayOf("/a","/b") not supported fully; keep empty if not found
+        return "";
+    }
+
+    private static HttpMethod httpFromAnnotation(String annotationName, String args) {
+        switch (annotationName) {
+            case "GetMapping": return HttpMethod.GET;
+            case "PostMapping": return HttpMethod.POST;
+            case "PutMapping": return HttpMethod.PUT;
+            case "DeleteMapping": return HttpMethod.DELETE;
+            case "PatchMapping": return HttpMethod.PATCH;
+            case "RequestMapping":
+                // Look for method = RequestMethod.X
+                Matcher m = Pattern.compile("method\\s*=\\s*RequestMethod\\.([A-Z]+)").matcher(args != null ? args : "");
+                if (m.find()) {
+                    String v = m.group(1);
+                    try { return HttpMethod.valueOf(v); } catch (Exception ignored) {}
+                }
+                return HttpMethod.ALL;
+            default: return HttpMethod.ALL;
+        }
+    }
+
+    private static String combinePaths(String base, String path) {
+        String b = normalizePath(base);
+        String p = normalizePath(path);
+        if ((b == null || b.isEmpty()) && (p == null || p.isEmpty())) return "/";
+        String combined = (b == null ? "" : (b.startsWith("/") ? b : "/" + b)) + (p == null ? "" : (p.startsWith("/") ? p : "/" + p));
+        combined = combined.replaceAll("//+", "/");
+        if (combined.length() > 1 && combined.endsWith("/")) combined = combined.substring(0, combined.length() - 1);
+        return combined.isEmpty() ? "/" : combined;
+    }
+
+    private static String normalizePath(String s) {
+        if (s == null) return "";
+        return s.trim();
     }
 }
