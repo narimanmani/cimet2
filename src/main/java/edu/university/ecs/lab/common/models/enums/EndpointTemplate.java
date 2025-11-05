@@ -15,7 +15,10 @@ import java.util.Set;
  */
 @Getter
 public class EndpointTemplate {
-    public static final List<String> ENDPOINT_ANNOTATIONS = Arrays.asList("RequestMapping", "GetMapping", "PutMapping", "PostMapping", "DeleteMapping", "PatchMapping");
+    public static final List<String> ENDPOINT_ANNOTATIONS = Arrays.asList(
+                "RequestMapping", "GetMapping", "PutMapping", "PostMapping", "DeleteMapping", "PatchMapping",
+                // Retrofit annotations
+                "GET", "POST", "PUT", "DELETE", "PATCH");
     private final HttpMethod httpMethod;
     private final String name;
     private final String url;
@@ -102,18 +105,23 @@ public class EndpointTemplate {
         switch (mapping) {
             case "GetMapping":
             case "RequestMethod.GET":
+            case "GET":
                 return HttpMethod.GET;
             case "PostMapping":
             case "RequestMethod.POST":
+            case "POST":
                 return HttpMethod.POST;
             case "DeleteMapping":
             case "RequestMethod.DELETE":
+            case "DELETE":
                 return HttpMethod.DELETE;
             case "PutMapping":
             case "RequestMethod.PUT":
+            case "PUT":
                 return HttpMethod.PUT;
             case "PatchMapping":
             case "RequestMethod.PATCH":
+            case "PATCH":
                 return HttpMethod.PATCH;
             default:
                 return HttpMethod.ALL;

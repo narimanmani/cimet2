@@ -21,8 +21,16 @@ import java.util.stream.Collectors;
  */
 @Getter
 public class RestCallTemplate {
-    public static final Set<String> REST_OBJECTS = Set.of("RestTemplate", "OAuth2RestOperations", "OAuth2RestTemplate", "WebClient");
-    public static final Set<String> REST_METHODS = Set.of("getForObject", "postForObject", "patchForObject", "put", "delete", "exchange", "get", "post", "options", "patch");
+    public static final Set<String> REST_OBJECTS = Set.of(
+            "RestTemplate", "OAuth2RestOperations", "OAuth2RestTemplate", "WebClient",
+            // Additional HTTP clients
+            "HttpClient", "HttpClientRegistry", "OkHttpClient");
+    public static final Set<String> REST_METHODS = Set.of(
+            "getForObject", "postForObject", "patchForObject", "put", "delete", "exchange",
+            // Common client methods
+            "get", "post", "options", "patch",
+            // OkHttp
+            "newCall");
     private static final String UNKNOWN_VALUE = "{?}";
 
     private final String url;
@@ -61,6 +69,19 @@ public class RestCallTemplate {
                 return HttpMethod.DELETE;
             case "exchange":
                 return getHttpMethodForExchange(mce.getArguments().stream().map(Node::toString).collect(Collectors.joining()));
+            case "newCall":
+                // OkHttpClient.newCall(Request)
+                if (!mce.getArguments().isEmpty()) {
+                    String req = mce.getArgument(0).toString();
+                    if (req.contains(".method(\"POST\"") || req.contains(".post(") ) return HttpMethod.POST;
+                    if (req.contains(".method(\"PUT\"")  || req.contains(".put(") )  return HttpMethod.PUT;
+                    if (req.contains(".method(\"DELETE\"") || req.contains(".delete(") ) return HttpMethod.DELETE;
+                    if (req.contains(".method(\"PATCH\"") || req.contains(".patch(") ) return HttpMethod.PATCH;
+                    if (req.contains(".method(\"OPTIONS\"")) return HttpMethod.OPTIONS;
+                    // OkHttp defaults to GET when no body and no explicit method
+                    return HttpMethod.GET;
+                }
+                break;
         }
 
         return HttpMethod.NONE;
@@ -195,6 +216,17 @@ public class RestCallTemplate {
 
     private String preParseURL(MethodCallExpr mce, MethodCall mc) {
 
+        // OkHttp: okHttpClient.newCall(new Request.Builder().url("...").build())
+        if ("OkHttpClient".equals(mc.getObjectType()) && "newCall".equals(mce.getNameAsString())) {
+            if (!mce.getArguments().isEmpty()) {
+                Expression arg = mce.getArgument(0);
+                String candidate = extractUrlFromOkHttpRequest(arg);
+                if (!candidate.isEmpty()) {
+                    return cleanURL(candidate);
+                }
+            }
+        }
+
         // Nuance for webclient with method appender pattern
         if(mc.getObjectType().equals("WebClient")) {
             if(mce.getParentNode().isPresent()) {
@@ -203,10 +235,47 @@ public class RestCallTemplate {
                 }
             }
         } else {
-            return mce.getArguments().get(0).toString().isEmpty() ? "" : cleanURL(parseURL(mce.getArguments().get(0)));
+            // Default: use first argument as URL
+            if (!mce.getArguments().isEmpty()) {
+                return mce.getArguments().get(0).toString().isEmpty() ? "" : cleanURL(parseURL(mce.getArguments().get(0)));
+            }
         }
 
         return "";
+    }
+
+    private String extractUrlFromOkHttpRequest(Expression exp) {
+        String source = null;
+        if (exp == null) return "";
+        if (exp.isMethodCallExpr() || exp.isObjectCreationExpr()) {
+            source = exp.toString();
+        } else if (exp.isNameExpr()) {
+            String varName = exp.asNameExpr().getNameAsString();
+            for (VariableDeclarator vd : cu.findAll(VariableDeclarator.class)) {
+                if (vd.getNameAsString().equals(varName) && vd.getInitializer().isPresent()) {
+                    source = vd.getInitializer().get().toString();
+                    break;
+                }
+            }
+        } else {
+            source = exp.toString();
+        }
+        if (source == null) return "";
+        // Try explicit url("...")
+        Pattern p = Pattern.compile("url\\(\\\"([^\\\"]+)\\\"\\)");
+        Matcher m = p.matcher(source);
+        if (m.find()) {
+            return m.group(1);
+        }
+        // Try HttpUrl.parse("...") pattern
+        p = Pattern.compile("HttpUrl\\.parse\\(\\\"([^\\\"]+)\\\"\\)");
+        m = p.matcher(source);
+        if (m.find()) {
+            return m.group(1);
+        }
+        // Fallback to generic backup extraction
+        String fallback = backupParseURL(new NameExpr(source));
+        return fallback == null ? "" : fallback;
     }
 
     /**

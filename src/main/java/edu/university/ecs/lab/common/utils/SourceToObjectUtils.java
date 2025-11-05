@@ -120,14 +120,34 @@ public class SourceToObjectUtils {
         ClassRole classRole = parseClassRole(classAnnotations);
 
         // Return unknown classRoles where annotation not found
+        boolean isRetrofitInterface = false;
         if (classRole.equals(ClassRole.UNKNOWN)) {
-            LoggerManager.warn(() -> "JClass filtered  " + sourceFile.getPath() + " class role unknown");
-            return null;
+            // Detect Retrofit-style interfaces (methods annotated with HTTP verb annotations)
+            Optional<ClassOrInterfaceDeclaration> coidOpt = cu.findFirst(ClassOrInterfaceDeclaration.class);
+            if (coidOpt.isPresent()) {
+                ClassOrInterfaceDeclaration coid = coidOpt.get();
+                boolean hasRetrofitAnnotations = coid.getMethods().stream()
+                        .flatMap(md -> md.getAnnotations().stream())
+                        .anyMatch(a -> EndpointTemplate.ENDPOINT_ANNOTATIONS.contains(a.getNameAsString()));
+                if (coid.isInterface() && hasRetrofitAnnotations) {
+                    // Keep as SERVICE to avoid mislabeling as Feign
+                    classRole = ClassRole.SERVICE;
+                    isRetrofitInterface = true;
+                } else {
+                    LoggerManager.warn(() -> "JClass filtered  " + sourceFile.getPath() + " class role unknown");
+                    return null;
+                }
+            } else {
+                LoggerManager.warn(() -> "JClass filtered  " + sourceFile.getPath() + " class role unknown");
+                return null;
+            }
         }
 
         JClass jClass;
         if(classRole == ClassRole.FEIGN_CLIENT) {
             jClass = handleFeignClient(requestMapping, classAnnotations);
+        } else if(isRetrofitInterface) {
+            jClass = handleRetrofitInterface(requestMapping, classAnnotations);
         } else if(classRole == ClassRole.REP_REST_RSC) {
             jClass = handleRepositoryRestResource(requestMapping, classAnnotations);
         } else {
@@ -306,6 +326,15 @@ public class SourceToObjectUtils {
 
         if (Objects.isNull(scope)) {
             return "";
+        }
+
+        // Handle inline constructor calls like new RestTemplate().exchange(...)
+        if (scope.isObjectCreationExpr()) {
+            try {
+                return scope.asObjectCreationExpr().getType().getNameAsString();
+            } catch (Exception ignored) {
+                // fall through to resolver
+            }
         }
 
         try {
@@ -732,5 +761,49 @@ public class SourceToObjectUtils {
     private static String normalizePath(String s) {
         if (s == null) return "";
         return s.trim();
+    }
+
+    /**
+     * Retrofit-style interface represents an HTTP client defined by annotations like @GET/@POST.
+     * Convert interface methods into Method + RestCall entries while keeping class role as SERVICE.
+     */
+    private static JClass handleRetrofitInterface(AnnotationExpr requestMapping, Set<AnnotationExpr> classAnnotations) {
+
+        // Parse the methods
+        Set<Method> methods = parseMethods(cu.findAll(MethodDeclaration.class), requestMapping);
+
+        // New methods for conversion
+        Set<Method> newMethods = new HashSet<>();
+        // New rest calls for conversion
+        List<MethodCall> newRestCalls = new ArrayList<>();
+
+        // For each method that is detected as an endpoint convert into a Method + RestCall
+        for(Method method : methods) {
+            if(method instanceof Endpoint) {
+                Endpoint endpoint = (Endpoint) method;
+                newMethods.add(new Method(method.getName(), packageAndClassName, method.getParameters(), method.getReturnType(), method.getAnnotations(), method.getMicroserviceName(), method.getClassName()));
+
+                // Build RestCall directly from endpoint (no Feign label)
+                newRestCalls.add(new RestCall(
+                        new MethodCall("exchange", packageAndClassName, "RestCallTemplate", "restCallTemplate", method.getName(), "", endpoint.getMicroserviceName(), endpoint.getClassName()),
+                        endpoint.getUrl(),
+                        endpoint.getHttpMethod()
+                ));
+            } else {
+                newMethods.add(method);
+            }
+        }
+
+        // Build the JClass with SERVICE role
+        return new JClass(
+                className,
+                path,
+                packageName,
+                ClassRole.SERVICE,
+                newMethods,
+                parseFields(cu.findAll(FieldDeclaration.class)),
+                parseAnnotations(classAnnotations),
+                newRestCalls,
+                cu.findAll(ClassOrInterfaceDeclaration.class).get(0).getImplementedTypes().stream().map(NodeWithSimpleName::getNameAsString).collect(Collectors.toSet()));
     }
 }

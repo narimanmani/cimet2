@@ -139,6 +139,11 @@ public class IRExtractionService {
             boolean containsGradle = false;
             if (files != null) {
                 for (File file : files) {
+                    // Exclude deck and deck-kayenta directories entirely
+                    // TODO: Remove before moving the code back, this is only for spinnaker
+                    if (file.isDirectory() && (file.getName().equals("deck") || file.getName().equals("deck-kayenta"))) {
+                        continue;
+                    }
                     if (file.isFile() && file.getName().equals("pom.xml")) {
                         try {
 
@@ -235,6 +240,10 @@ public class IRExtractionService {
                  * 3. Check if other projects that are not Spring have a different pattern for where they place test files. Ex, the Kotlin project
                  */
                 if (file.getPath().contains("src/test") || file.getPath().contains("config")) {
+                    continue;
+                }
+                // Exclude top-level directories named deck and deck-kayenta
+                if (file.isDirectory() && (file.getName().equals("deck") || file.getName().equals("deck-kayenta"))) {
                     continue;
                 }
                 if (file.isDirectory()) {
