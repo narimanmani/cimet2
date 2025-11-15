@@ -290,6 +290,14 @@ public class GitService {
         return returnList;
     }
 
+    public Optional<LocalDate> getStartDate() {
+        return Optional.ofNullable(startDate);
+    }
+
+    public Optional<LocalDate> getEndDate() {
+        return Optional.ofNullable(endDate);
+    }
+
     private boolean isAfterEndDate(RevCommit commit) {
         if (Objects.isNull(endDate)) {
             return false;

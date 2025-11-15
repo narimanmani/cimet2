@@ -35,6 +35,7 @@ import java.nio.file.StandardCopyOption;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.ZoneOffset;
+import java.time.temporal.ChronoUnit;
 import java.time.temporal.WeekFields;
 import java.util.*;
 
@@ -78,6 +79,8 @@ public class DetectionService {
     private MergeService mergeService;
     private final XSSFWorkbook workbook;
     private XSSFSheet sheet;
+    private final LocalDate analysisStartDate;
+    private final LocalDate analysisEndDate;
 //    private final String firstCommitID
 
     /**
@@ -92,6 +95,8 @@ public class DetectionService {
         FileUtils.makeDirs();
         // Setup local repo
         gitService = new GitService(configPath);
+        analysisStartDate = gitService.getStartDate().orElse(null);
+        analysisEndDate = gitService.getEndDate().orElse(null);
         workbook = new XSSFWorkbook();
 
         BASE_DELTA_PATH = "./output/" + config.getRepoName() + BASE_DELTA_PATH;
@@ -119,7 +124,7 @@ public class DetectionService {
         // Write the initial row as empty
         writeEmptyRow(1);
 
-        Map<LocalDate, WeeklySummary> weeklySummaries = new TreeMap<>();
+        Map<LocalDate, WeeklySummary> weeklySummaries = initializeWeeklySummaries();
 
         // Starting at the first commit until commits - 1
         for (int i = 0; i < commits.size(); i++) {
@@ -433,6 +438,26 @@ public class DetectionService {
     }
 
     /**
+     * Prepare weekly summaries for each requested week so empty intervals appear in the report.
+     *
+     * @return map keyed by week start date
+     */
+    private Map<LocalDate, WeeklySummary> initializeWeeklySummaries() {
+        TreeMap<LocalDate, WeeklySummary> summaries = new TreeMap<>();
+
+        if (Objects.nonNull(analysisStartDate) && Objects.nonNull(analysisEndDate)) {
+            LocalDate current = analysisStartDate;
+            while (!current.isAfter(analysisEndDate)) {
+                LocalDate weekEnd = calculateWeekEnd(current);
+                summaries.put(current, new WeeklySummary(current, weekEnd));
+                current = current.plusWeeks(1);
+            }
+        }
+
+        return summaries;
+    }
+
+    /**
      * Update the weekly aggregation data with a commit's metrics.
      *
      * @param weeklySummaries map storing aggregated values by week
@@ -442,8 +467,8 @@ public class DetectionService {
      */
     private void updateWeeklySummary(Map<LocalDate, WeeklySummary> weeklySummaries, LocalDate commitDate,
                                      Map<String, Integer> antipatterns, Map<String, Double> metrics) {
-        LocalDate weekStart = commitDate.with(WEEK_FIELDS.dayOfWeek(), 1);
-        LocalDate weekEnd = commitDate.with(WEEK_FIELDS.dayOfWeek(), 7);
+        LocalDate weekStart = calculateWeekStart(commitDate);
+        LocalDate weekEnd = calculateWeekEnd(weekStart);
 
         WeeklySummary summary = weeklySummaries.computeIfAbsent(weekStart, unused -> new WeeklySummary(
                 weekStart,
@@ -452,8 +477,34 @@ public class DetectionService {
         summary.addCommit(antipatterns, metrics);
     }
 
+    private LocalDate calculateWeekStart(LocalDate commitDate) {
+        if (Objects.nonNull(analysisStartDate)) {
+            if (commitDate.isBefore(analysisStartDate)) {
+                return analysisStartDate;
+            }
+
+            long daysFromStart = ChronoUnit.DAYS.between(analysisStartDate, commitDate);
+            long weekOffset = Math.floorDiv(daysFromStart, 7);
+            return analysisStartDate.plusWeeks(weekOffset);
+        }
+
+        return commitDate.with(WEEK_FIELDS.dayOfWeek(), 1);
+    }
+
+    private LocalDate calculateWeekEnd(LocalDate weekStart) {
+        if (Objects.nonNull(analysisStartDate)) {
+            LocalDate candidate = weekStart.plusDays(6);
+            if (Objects.nonNull(analysisEndDate) && candidate.isAfter(analysisEndDate)) {
+                return analysisEndDate;
+            }
+            return candidate;
+        }
+
+        return weekStart.with(WEEK_FIELDS.dayOfWeek(), 7);
+    }
+
     /**
-     * Write a weekly analysis sheet aggregating commit data by ISO week.
+     * Write a weekly analysis sheet aggregating commit data by week.
      *
      * @param weeklySummaries aggregated weekly metrics
      */
