@@ -119,7 +119,7 @@ public class DetectionService {
         // Write the initial row as empty
         writeEmptyRow(1);
 
-        Map<String, WeeklySummary> weeklySummaries = new LinkedHashMap<>();
+        Map<LocalDate, WeeklySummary> weeklySummaries = new TreeMap<>();
 
         // Starting at the first commit until commits - 1
         for (int i = 0; i < commits.size(); i++) {
@@ -440,15 +440,14 @@ public class DetectionService {
      * @param antipatterns    anti-pattern counts observed for the commit
      * @param metrics         metric values observed for the commit
      */
-    private void updateWeeklySummary(Map<String, WeeklySummary> weeklySummaries, LocalDate commitDate,
+    private void updateWeeklySummary(Map<LocalDate, WeeklySummary> weeklySummaries, LocalDate commitDate,
                                      Map<String, Integer> antipatterns, Map<String, Double> metrics) {
-        int weekNumber = commitDate.get(WEEK_FIELDS.weekOfWeekBasedYear());
-        int weekYear = commitDate.get(WEEK_FIELDS.weekBasedYear());
-        String key = String.format("%d-W%02d", weekYear, weekNumber);
+        LocalDate weekStart = commitDate.with(WEEK_FIELDS.dayOfWeek(), 1);
+        LocalDate weekEnd = commitDate.with(WEEK_FIELDS.dayOfWeek(), 7);
 
-        WeeklySummary summary = weeklySummaries.computeIfAbsent(key, unused -> new WeeklySummary(
-                commitDate.with(WEEK_FIELDS.dayOfWeek(), 1),
-                commitDate.with(WEEK_FIELDS.dayOfWeek(), 7)));
+        WeeklySummary summary = weeklySummaries.computeIfAbsent(weekStart, unused -> new WeeklySummary(
+                weekStart,
+                weekEnd));
 
         summary.addCommit(antipatterns, metrics);
     }
@@ -458,7 +457,7 @@ public class DetectionService {
      *
      * @param weeklySummaries aggregated weekly metrics
      */
-    private void writeWeeklyAnalysis(Map<String, WeeklySummary> weeklySummaries) {
+    private void writeWeeklyAnalysis(Map<LocalDate, WeeklySummary> weeklySummaries) {
         if (weeklySummaries.isEmpty()) {
             return;
         }
