@@ -16,6 +16,12 @@ import org.eclipse.jgit.treewalk.TreeWalk;
 
 import java.io.File;
 import java.nio.charset.StandardCharsets;
+import java.time.Instant;
+import java.time.LocalDate;
+import java.time.ZoneOffset;
+import java.time.format.DateTimeFormatter;
+import java.time.format.DateTimeParseException;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
@@ -27,9 +33,12 @@ import java.util.stream.Collectors;
 public class GitService {
     private static final int EXIT_SUCCESS = 0;
     private static final String HEAD_COMMIT = "HEAD";
+    private static final DateTimeFormatter DATE_FORMATTER = DateTimeFormatter.ISO_LOCAL_DATE;
 
     private final Config config;
     private final Repository repository;
+    private final LocalDate startDate;
+    private final LocalDate endDate;
 
     /**
      * Create a Git service object from a project configuration file
@@ -41,6 +50,8 @@ public class GitService {
         FileUtils.makeDirs();
         cloneRemote();
         this.repository = initRepository();
+        this.startDate = resolveDateFromEnv("DELTA_WINDOW_START");
+        this.endDate = resolveDateFromEnv("DELTA_WINDOW_END");
     }
 
     /**
@@ -259,15 +270,60 @@ public class GitService {
      * @return Git log as a list
      */
     public Iterable<RevCommit> getLog() {
-        Iterable<RevCommit> returnList = null;
+        List<RevCommit> returnList = new ArrayList<>();
 
         try (Git git = new Git(repository)) {
-            returnList = git.log().call();
+            Iterable<RevCommit> commits = git.log().call();
+            for (RevCommit commit : commits) {
+                if (isAfterEndDate(commit)) {
+                    continue;
+                }
+                if (isBeforeStartDate(commit)) {
+                    break;
+                }
+                returnList.add(commit);
+            }
         } catch (Exception e) {
             Error.reportAndExit(Error.GIT_FAILED, Optional.of(e));
         }
 
         return returnList;
+    }
+
+    private boolean isAfterEndDate(RevCommit commit) {
+        if (Objects.isNull(endDate)) {
+            return false;
+        }
+        LocalDate commitDate = toLocalDate(commit);
+        return commitDate.isAfter(endDate);
+    }
+
+    private boolean isBeforeStartDate(RevCommit commit) {
+        if (Objects.isNull(startDate)) {
+            return false;
+        }
+        LocalDate commitDate = toLocalDate(commit);
+        return commitDate.isBefore(startDate);
+    }
+
+    private LocalDate toLocalDate(RevCommit commit) {
+        return Instant.ofEpochSecond(commit.getCommitTime())
+                .atZone(ZoneOffset.UTC)
+                .toLocalDate();
+    }
+
+    private LocalDate resolveDateFromEnv(String envVariable) {
+        String value = System.getenv(envVariable);
+        if (Objects.isNull(value) || value.isBlank()) {
+            return null;
+        }
+
+        try {
+            return LocalDate.parse(value, DATE_FORMATTER);
+        } catch (DateTimeParseException ex) {
+            LoggerManager.warn(() -> "Ignoring invalid date '" + value + "' for env var " + envVariable);
+            return null;
+        }
     }
 
     /**
