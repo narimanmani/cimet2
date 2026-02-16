@@ -1,0 +1,184 @@
+name: metrics-extended
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: 'Git ref (branch or tag) of spinnaker/spinnaker to analyze'
+        required: false
+        default: 'main'
+      start_date:
+        description: 'Start date (YYYY-MM-DD) of the delta history window'
+        required: true
+      end_date:
+        description: 'End date (YYYY-MM-DD) of the delta history window'
+        required: true
+
+jobs:
+  metrics:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Cimet
+        uses: actions/checkout@v4
+
+      - name: Set up Temurin JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: maven
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Build Cimet
+        run: mvn -B -ntp clean install -DskipTests
+
+      - name: Install workflow Python dependencies
+        run: python -m pip install --disable-pip-version-check openpyxl
+
+      - name: Prepare shallow Spinnaker clone
+        env:
+          TARGET_REF: ${{ inputs.ref || 'main' }}
+          START_INPUT: ${{ inputs.start_date || '' }}
+          END_INPUT: ${{ inputs.end_date || '' }}
+        run: |
+          if [ -z "$START_INPUT" ] || [ -z "$END_INPUT" ]; then
+            echo "::error::Both start_date and end_date inputs are required."
+            exit 1
+          fi
+          if ! START_DATE=$(date -u -d "$START_INPUT" +%Y-%m-%d 2>/dev/null); then
+            echo "::error::Invalid start_date '$START_INPUT'. Use YYYY-MM-DD format."
+            exit 1
+          fi
+          if ! END_DATE=$(date -u -d "$END_INPUT" +%Y-%m-%d 2>/dev/null); then
+            echo "::error::Invalid end_date '$END_INPUT'. Use YYYY-MM-DD format."
+            exit 1
+          fi
+          START_EPOCH=$(date -u -d "$START_DATE" +%s)
+          END_EPOCH=$(date -u -d "$END_DATE" +%s)
+          if [ "$START_EPOCH" -ge "$END_EPOCH" ]; then
+            echo "::error::start_date must be before end_date."
+            exit 1
+          fi
+          export START_DATE END_DATE
+          MONTHS_INPUT=$(python -c "import datetime as d, os, sys; start=d.datetime.strptime(os.environ['START_DATE'], '%Y-%m-%d').date(); end=d.datetime.strptime(os.environ['END_DATE'], '%Y-%m-%d').date(); delta=(end-start).days; delta <= 0 and sys.exit('Non-positive day span computed'); months = -(-delta // 30); print(months)")
+          if [ -z "$MONTHS_INPUT" ] || ! [[ "$MONTHS_INPUT" =~ ^[0-9]+$ ]]; then
+            echo "::error::Unable to derive a month span from $START_DATE to $END_DATE."
+            exit 1
+          fi
+          if [ "$MONTHS_INPUT" -le 0 ]; then
+            echo "::error::The derived month span ($MONTHS_INPUT) must be greater than zero."
+            exit 1
+          fi
+          SINCE="$START_DATE"
+          echo "DELTA_WINDOW_START=$SINCE" >> "$GITHUB_ENV"
+          echo "DELTA_WINDOW_END=$END_DATE" >> "$GITHUB_ENV"
+          echo "DELTA_MONTHS=$MONTHS_INPUT" >> "$GITHUB_ENV"
+          mkdir -p clone
+          git clone \
+            --branch "$TARGET_REF" \
+            --single-branch \
+            --shallow-since="$SINCE" \
+            https://github.com/spinnaker/spinnaker.git \
+            clone/spinnaker
+          cd clone/spinnaker
+          COMMITS_NEEDED=$((MONTHS_INPUT + 1))
+          COMMIT_COUNT=$(git rev-list --count HEAD)
+          if [ "$COMMIT_COUNT" -lt "$COMMITS_NEEDED" ]; then
+            git fetch --depth=$COMMITS_NEEDED origin "$TARGET_REF"
+            COMMIT_COUNT=$(git rev-list --count HEAD)
+          fi
+          if [ "$COMMIT_COUNT" -lt "$COMMITS_NEEDED" ]; then
+            echo "::warning::Requested $MONTHS_INPUT months but only $COMMIT_COUNT commits are available on $TARGET_REF."
+          fi
+          DELTA_HEAD=$(git rev-parse HEAD)
+          DELTA_HEAD_INFO=$(git show -s --format='%cI %s' HEAD)
+          if git rev-parse HEAD~$MONTHS_INPUT >/dev/null 2>&1; then
+            DELTA_BASE=$(git rev-parse HEAD~$MONTHS_INPUT)
+            DELTA_BASE_INFO=$(git show -s --format='%cI %s' HEAD~$MONTHS_INPUT)
+          else
+            DELTA_BASE=""
+            DELTA_BASE_INFO="(not available)"
+          fi
+          {
+            echo "DELTA_HEAD=$DELTA_HEAD"
+            echo "DELTA_HEAD_INFO=$DELTA_HEAD_INFO"
+            echo "DELTA_BASE=$DELTA_BASE"
+            echo "DELTA_BASE_INFO=$DELTA_BASE_INFO"
+          } >> "$GITHUB_ENV"
+          echo "Most recent commits in scope:"
+          git log -$COMMITS_NEEDED --pretty=format:'%H %cI %s'
+
+      - name: Prepare Spinnaker configuration
+        env:
+          TARGET_REF: ${{ inputs.ref || 'main' }}
+        run: |
+          cat <<JSON > config.json
+          {
+            "systemName": "Spinnaker",
+            "repositoryURL": "https://github.com/spinnaker/spinnaker.git",
+            "branch": "${TARGET_REF}",
+            "baseBranch": "${TARGET_REF}"
+          }
+          JSON
+
+      - name: Run Excel output detection
+        run: >
+          mvn exec:java
+          -Dexec.mainClass=edu.university.ecs.lab.detection.ExcelOutputRunner
+          -Dexec.args="./config.json"
+          -DskipTests
+
+      - name: Extend service trace and coupling outputs
+        run: >
+          python scripts/extend_spinnaker_metrics.py
+          --repo ./clone/spinnaker
+          --ir-dir ./output/spinnaker/IR
+          --workbook ./output/spinnaker/output-Spinnaker.xlsx
+          --output-dir ./output/spinnaker
+          --start-date "${{ env.DELTA_WINDOW_START }}"
+          --end-date "${{ env.DELTA_WINDOW_END }}"
+
+      - name: List generated artifacts
+        run: |
+          echo "Workspace contents:"
+          ls -R output || true
+
+      - name: Publish delta summary
+        env:
+          DELTA_WINDOW_START: ${{ env.DELTA_WINDOW_START }}
+          DELTA_WINDOW_END: ${{ env.DELTA_WINDOW_END }}
+          DELTA_HEAD: ${{ env.DELTA_HEAD }}
+          DELTA_BASE: ${{ env.DELTA_BASE }}
+          DELTA_HEAD_INFO: ${{ env.DELTA_HEAD_INFO }}
+          DELTA_BASE_INFO: ${{ env.DELTA_BASE_INFO }}
+          DELTA_MONTHS: ${{ env.DELTA_MONTHS }}
+        run: |
+          {
+            echo "## Delta configuration"
+            echo "- Delta window start: ${DELTA_WINDOW_START:-unknown}"
+            echo "- Delta window end: ${DELTA_WINDOW_END:-unknown}"
+            echo "- Months of history considered: ${DELTA_MONTHS:-unknown}"
+            echo "- Current commit: ${DELTA_HEAD:-unknown} ${DELTA_HEAD_INFO:+(${DELTA_HEAD_INFO})}"
+            echo "- Previous commit: ${DELTA_BASE:-unknown} ${DELTA_BASE_INFO:+(${DELTA_BASE_INFO})}"
+            echo ""
+            echo "## Extended output tables"
+            echo "- Commit-to-service trace with LOC deltas: output/spinnaker/commit_service_trace.csv"
+            echo "- Service weekly metrics (LOMLC + optional counts): output/spinnaker/service_weekly_metrics.csv"
+            echo "- Service-pair coupling with week-over-week deltas: output/spinnaker/service_pair_coupling.csv"
+            echo "- Summary: output/spinnaker/extended_metrics_summary.json"
+            echo "- Workbook enriched with 3 additional sheets: output/spinnaker/output-Spinnaker.xlsx"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload Excel artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: spinnaker-detection-extended-${{ github.run_id }}
+          path: |
+            output/spinnaker/output-Spinnaker.xlsx
+            output/spinnaker/**/*.json
+            output/spinnaker/*.csv
+          if-no-files-found: error
