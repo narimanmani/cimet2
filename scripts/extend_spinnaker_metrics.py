@@ -2,12 +2,15 @@
 import argparse
 import csv
 import datetime as dt
+import itertools
 import json
 import pathlib
 import re
 import subprocess
 from collections import defaultdict
-from typing import Dict, List, Tuple, Any
+from typing import Any, Dict, List, Tuple
+
+import pandas as pd
 
 try:
     from openpyxl import load_workbook
@@ -17,6 +20,11 @@ except ImportError:  # pragma: no cover
 
 def run(cmd: List[str], cwd: pathlib.Path) -> str:
     return subprocess.check_output(cmd, cwd=str(cwd), text=True)
+
+
+def iso_week_label(date_str: str) -> str:
+    year, week, _ = dt.date.fromisoformat(date_str).isocalendar()
+    return f"{year}-W{week:02d}"
 
 
 def git_commits(repo: pathlib.Path, start_date: str, end_date: str) -> List[Dict[str, Any]]:
@@ -31,28 +39,40 @@ def git_commits(repo: pathlib.Path, start_date: str, end_date: str) -> List[Dict
         ],
         repo,
     )
-    commits = []
+    commits: List[Dict[str, Any]] = []
     for line in log.splitlines():
         commit, iso = line.split("|", 1)
         timestamp = dt.datetime.fromisoformat(iso.replace("Z", "+00:00"))
-        commits.append({"commit": commit, "date": timestamp.date().isoformat(), "datetime": timestamp})
+        date_str = timestamp.date().isoformat()
+        commits.append(
+            {
+                "commit": commit,
+                "date": date_str,
+                "datetime": timestamp,
+                "week": iso_week_label(date_str),
+            }
+        )
     return commits
 
 
 def parse_ir_snapshots(ir_dir: pathlib.Path, commits: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    snapshots = []
+    snapshots: List[Dict[str, Any]] = []
     commit_map = {c["commit"]: c for c in commits}
+
     for path in sorted(ir_dir.glob("IR*_*.json")):
-        m = re.match(r"IR(\d+)_([0-9a-fA-F]+)\.json", path.name)
-        if not m:
+        match = re.match(r"IR(\d+)_([0-9a-fA-F]+)\.json", path.name)
+        if not match:
             continue
-        idx = int(m.group(1))
-        short = m.group(2).lower()
-        commit = next((c for c in commit_map if c.startswith(short)), None)
+
+        idx = int(match.group(1))
+        short = match.group(2).lower()
+        commit = next((full for full in commit_map if full.startswith(short)), None)
         if not commit:
             continue
+
         with path.open("r", encoding="utf-8") as fh:
             data = json.load(fh)
+
         snapshots.append(
             {
                 "index": idx,
@@ -61,16 +81,13 @@ def parse_ir_snapshots(ir_dir: pathlib.Path, commits: List[Dict[str, Any]]) -> L
                 "commit": commit,
                 "date": commit_map[commit]["date"],
                 "datetime": commit_map[commit]["datetime"],
+                "week": commit_map[commit]["week"],
                 "ir": data,
             }
         )
+
     snapshots.sort(key=lambda s: (s["index"], s["datetime"]))
     return snapshots
-
-
-def iso_week_label(date_str: str) -> str:
-    y, w, _ = dt.date.fromisoformat(date_str).isocalendar()
-    return f"{y}-W{w:02d}"
 
 
 def extract_service_paths(snapshot: Dict[str, Any]) -> List[Tuple[str, str]]:
@@ -104,12 +121,14 @@ def parse_numstat(repo: pathlib.Path, commit: str) -> List[Dict[str, Any]]:
         add, delete, file_path = parts
         add_n = 0 if add == "-" else int(add)
         del_n = 0 if delete == "-" else int(delete)
-        rows.append({
-            "file": file_path,
-            "loc_added": add_n,
-            "loc_deleted": del_n,
-            "loc_delta": add_n - del_n,
-        })
+        rows.append(
+            {
+                "file": file_path,
+                "loc_added": add_n,
+                "loc_deleted": del_n,
+                "loc_delta": add_n - del_n,
+            }
+        )
     return rows
 
 
@@ -148,98 +167,109 @@ def lomlc(operations: List[Dict[str, Any]]) -> float:
     return acc / pairs if pairs else 1.0
 
 
-def endpoints_by_service(snapshot: Dict[str, Any]) -> Dict[str, List[Tuple[str, str]]]:
-    data = defaultdict(list)
-    for ms in snapshot["ir"].get("microservices", []) or []:
-        sname = ms.get("name")
-        for controller in ms.get("controllers", []) or []:
-            for ep in controller.get("endpoints", []) or []:
-                method = (ep.get("httpMethod") or "ALL").upper()
-                url = (ep.get("url") or "").split("?", 1)[0]
-                if sname and url:
-                    data[sname].append((method, url))
-    return data
+def compute_service_weekly_metrics(snapshots: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    by_week: Dict[str, Dict[str, Any]] = {}
+    for snapshot in snapshots:
+        by_week[snapshot["week"]] = snapshot
 
-
-def match_restcall_target(source: str, method: str, url: str, endpoint_index: Dict[str, List[Tuple[str, str]]]) -> List[str]:
-    clean = url.replace("{?}", "").split("?", 1)[0]
-    matches = []
-    for svc, eps in endpoint_index.items():
-        if svc == source:
-            continue
-        for ep_method, ep_url in eps:
-            if clean == ep_url and (method == ep_method or ep_method == "ALL"):
-                matches.append(svc)
-                break
-    return matches
-
-
-def compute_weekly_tables(snapshots: List[Dict[str, Any]]) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
-    by_week = {}
-    for snap in snapshots:
-        week = iso_week_label(snap["date"])
-        by_week[week] = snap
-
-    service_rows = []
-    pair_rows = []
-    previous_pair_scores: Dict[Tuple[str, str], int] = {}
-
+    rows = []
     for week in sorted(by_week):
-        snap = by_week[week]
-        endpoint_index = endpoints_by_service(snap)
-
-        pair_scores = defaultdict(int)
-        for ms in snap["ir"].get("microservices", []) or []:
-            sname = ms.get("name")
-            if not sname:
+        snapshot = by_week[week]
+        for ms in snapshot["ir"].get("microservices", []) or []:
+            service_name = ms.get("name")
+            if not service_name:
                 continue
 
             classes = list_service_classes(ms)
             methods = [m for c in classes for m in (c.get("methods") or [])]
             controllers = ms.get("controllers", []) or []
-            operations = [operation_from_method(sname, m) for c in controllers for m in (c.get("methods") or [])]
-            dep_targets = set()
+            operations = [operation_from_method(service_name, m) for c in controllers for m in (c.get("methods") or [])]
+            dep_targets = {
+                mc.get("objectType")
+                for c in classes
+                for mc in (c.get("methodCalls") or [])
+                if mc.get("objectType")
+            }
 
-            for c in classes:
-                for mc in c.get("methodCalls", []) or []:
-                    tgt = mc.get("objectType")
-                    if tgt:
-                        dep_targets.add(tgt)
-                for rc in c.get("restCalls", []) or []:
-                    rmethod = (rc.get("httpMethod") or "GET").upper()
-                    rurl = rc.get("url") or ""
-                    for target in match_restcall_target(sname, rmethod, rurl, endpoint_index):
-                        key = tuple(sorted((sname, target)))
-                        pair_scores[key] += 1
-
-            service_rows.append(
+            rows.append(
                 {
                     "week": week,
-                    "commit": snap["commit"],
-                    "service": sname,
+                    "commit": snapshot["commit"],
+                    "service": service_name,
                     "LOMLC": round(lomlc(operations), 6),
                     "internal_dependency_count": len(dep_targets),
                     "function_count": len(methods),
                 }
             )
 
-        all_pairs = set(previous_pair_scores) | set(pair_scores)
-        for pair in sorted(all_pairs):
-            score = pair_scores.get(pair, 0)
-            prev = previous_pair_scores.get(pair, 0)
-            pair_rows.append(
+    return rows
+
+
+def compute_service_pair_coupling(trace_rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    trace_df = pd.DataFrame(trace_rows)
+    if trace_df.empty:
+        print("[debug] no trace rows available, coupling output will be empty")
+        return []
+
+    trace_df = trace_df.copy()
+    trace_df["week"] = trace_df["date"].map(iso_week_label)
+    trace_df = trace_df[trace_df["service"].notna() & (trace_df["service"] != "")]
+
+    commit_services = (
+        trace_df[["week", "commit", "service"]]
+        .drop_duplicates()
+        .groupby(["week", "commit"], as_index=False)["service"]
+        .agg(lambda s: sorted(set(s)))
+    )
+
+    print(f"[debug] coupling commit groups: {len(commit_services)}")
+
+    service_commit_counts: Dict[Tuple[str, str], int] = defaultdict(int)
+    pair_commit_counts: Dict[Tuple[str, str, str], int] = defaultdict(int)
+
+    for row in commit_services.itertuples(index=False):
+        week = row.week
+        services = list(row.service)
+        for service in services:
+            service_commit_counts[(week, service)] += 1
+
+        unique_services = sorted(set(services))
+        if len(unique_services) < 2:
+            continue
+        for s1, s2 in itertools.combinations(unique_services, 2):
+            pair_commit_counts[(week, s1, s2)] += 1
+
+    print(f"[debug] raw service-pair counts: {len(pair_commit_counts)}")
+
+    rows = []
+    previous_week_ssic: Dict[Tuple[str, str], float] = {}
+
+    for week in sorted({k[0] for k in pair_commit_counts.keys()}):
+        week_pairs = sorted([k for k in pair_commit_counts.keys() if k[0] == week])
+        for _, s1, s2 in week_pairs:
+            cochange = pair_commit_counts[(week, s1, s2)]
+            s1_count = service_commit_counts[(week, s1)]
+            s2_count = service_commit_counts[(week, s2)]
+            union = s1_count + s2_count - cochange
+            ssic = (cochange / union) if union > 0 else 0.0
+
+            prev = previous_week_ssic.get((s1, s2), 0.0)
+            delta = ssic - prev
+
+            rows.append(
                 {
                     "week": week,
-                    "commit": snap["commit"],
-                    "service_1": pair[0],
-                    "service_2": pair[1],
-                    "SSIC": score,
-                    "SSIC_delta": score - prev,
+                    "service_1": s1,
+                    "service_2": s2,
+                    "ssic": round(ssic, 6),
+                    "ssic_delta": round(delta, 6),
+                    "cochange_commit_count": int(cochange),
                 }
             )
-        previous_pair_scores = dict(pair_scores)
+            previous_week_ssic[(s1, s2)] = ssic
 
-    return service_rows, pair_rows
+    print(f"[debug] final coupling rows: {len(rows)}")
+    return rows
 
 
 def write_csv(path: pathlib.Path, rows: List[Dict[str, Any]], headers: List[str]) -> None:
@@ -270,7 +300,7 @@ def enrich_workbook(workbook_path: pathlib.Path, trace_rows, service_rows, pair_
         ),
         (
             "Service-Pair-Coupling",
-            ["week", "commit", "service_1", "service_2", "SSIC", "SSIC_delta"],
+            ["week", "service_1", "service_2", "ssic", "ssic_delta", "cochange_commit_count"],
             pair_rows,
         ),
     ]
@@ -297,28 +327,30 @@ def main() -> None:
     args = parser.parse_args()
 
     commits = git_commits(args.repo, args.start_date, args.end_date)
-    snapshots = parse_ir_snapshots(args.ir_dir, commits)
     if not commits:
         raise SystemExit("No commits found for the requested date window.")
+
+    snapshots = parse_ir_snapshots(args.ir_dir, commits)
     if not snapshots:
         raise SystemExit("No IR snapshots found to build weekly service metrics.")
 
     snapshot_rules = sorted([(snap["datetime"], extract_service_paths(snap)) for snap in snapshots], key=lambda t: t[0])
 
     trace_rows = []
-    sorted_commits = sorted(commits, key=lambda c: c["datetime"])
-    for commit in sorted_commits:
+    for commit in sorted(commits, key=lambda c: c["datetime"]):
         rules = snapshot_rules[0][1]
         for snap_time, snap_rules in snapshot_rules:
             if snap_time <= commit["datetime"]:
                 rules = snap_rules
             else:
                 break
+
         for numstat in parse_numstat(args.repo, commit["commit"]):
             trace_rows.append(
                 {
                     "commit": commit["commit"],
                     "date": commit["date"],
+                    "week": commit["week"],
                     "file": numstat["file"],
                     "service": map_file_to_service(numstat["file"], rules),
                     "loc_added": numstat["loc_added"],
@@ -327,12 +359,33 @@ def main() -> None:
                 }
             )
 
-    service_rows, pair_rows = compute_weekly_tables(snapshots)
+    print(f"[debug] commits: {len(commits)}")
+    print(f"[debug] snapshots: {len(snapshots)}")
+    print(f"[debug] trace rows: {len(trace_rows)}")
+
+    service_rows = compute_service_weekly_metrics(snapshots)
+    pair_rows = compute_service_pair_coupling(trace_rows)
 
     out = args.output_dir
-    write_csv(out / "commit_service_trace.csv", trace_rows, ["commit", "date", "file", "service", "loc_added", "loc_deleted", "loc_delta"])
-    write_csv(out / "service_weekly_metrics.csv", service_rows, ["week", "commit", "service", "LOMLC", "internal_dependency_count", "function_count"])
-    write_csv(out / "service_pair_coupling.csv", pair_rows, ["week", "commit", "service_1", "service_2", "SSIC", "SSIC_delta"])
+    write_csv(
+        out / "commit_service_trace.csv",
+        trace_rows,
+        ["commit", "date", "week", "file", "service", "loc_added", "loc_deleted", "loc_delta"],
+    )
+    write_csv(
+        out / "service_weekly_metrics.csv",
+        service_rows,
+        ["week", "commit", "service", "LOMLC", "internal_dependency_count", "function_count"],
+    )
+
+    coupling_headers = ["week", "service_1", "service_2", "ssic", "ssic_delta", "cochange_commit_count"]
+    if pair_rows:
+        write_csv(out / "service_pair_coupling.csv", pair_rows, coupling_headers)
+    else:
+        print("[debug] no coupling rows found; preserving any existing service_pair_coupling.csv")
+        existing = out / "service_pair_coupling.csv"
+        if not existing.exists():
+            write_csv(existing, [], coupling_headers)
 
     summary = {
         "commits": len(commits),
