@@ -5,13 +5,16 @@ on:
     inputs:
       ref:
         description: 'Git ref (branch or tag) of spinnaker/spinnaker to analyze'
+        type: string
         required: false
         default: 'main'
       start_date:
         description: 'Start date (YYYY-MM-DD) of the delta history window'
+        type: string
         required: true
       end_date:
         description: 'End date (YYYY-MM-DD) of the delta history window'
+        type: string
         required: true
   pull_request:
     branches:
