@@ -13,6 +13,12 @@ on:
       end_date:
         description: 'End date (YYYY-MM-DD) of the delta history window'
         required: true
+  pull_request:
+    branches:
+      - "**"
+    paths:
+      - ".github/workflows/spinnaker-y-metric-extraction-extended.yml"
+      - "scripts/extend_spinnaker_metrics.py"
 
 jobs:
   metrics:
@@ -46,8 +52,9 @@ jobs:
           END_INPUT: ${{ inputs.end_date || '' }}
         run: |
           if [ -z "$START_INPUT" ] || [ -z "$END_INPUT" ]; then
-            echo "::error::Both start_date and end_date inputs are required."
-            exit 1
+            START_INPUT=$(date -u -d "30 days ago" +%Y-%m-%d)
+            END_INPUT=$(date -u +%Y-%m-%d)
+            echo "::notice::start_date/end_date not provided; defaulting to ${START_INPUT}..${END_INPUT}."
           fi
           if ! START_DATE=$(date -u -d "$START_INPUT" +%Y-%m-%d 2>/dev/null); then
             echo "::error::Invalid start_date '$START_INPUT'. Use YYYY-MM-DD format."
