@@ -52,7 +52,7 @@ jobs:
           END_INPUT: ${{ inputs.end_date || '' }}
         run: |
           if [ -z "$START_INPUT" ] || [ -z "$END_INPUT" ]; then
-            START_INPUT=$(date -u -d "30 days ago" +%Y-%m-%d)
+            START_INPUT=$(date -u -d "12 months ago" +%Y-%m-%d)
             END_INPUT=$(date -u +%Y-%m-%d)
             echo "::notice::start_date/end_date not provided; defaulting to ${START_INPUT}..${END_INPUT}."
           fi
